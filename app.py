@@ -489,7 +489,215 @@ def analysis_tab():
     with st.expander('🔍 Raw Race Data'):
         st.json(analysis['race_data'])
 
+# ============================================================
+# PUNTERSEDGE API INTEGRATION
+# Read-only diagnostics
+# Model v0.2 and Supabase data remain unchanged
+# ============================================================
 
+PUNTERSEDGE_BASE_URL = "https://api.puntersedge.online/v1"
+
+
+def puntersedge_request(endpoint, api_key, params=None):
+    """
+    Make a read-only request to the PuntersEdge API.
+    API credentials are never displayed.
+    """
+
+    response = requests.get(
+        PUNTERSEDGE_BASE_URL + endpoint,
+        headers={
+            "X-API-Key": api_key,
+            "Accept": "application/json"
+        },
+        params=params or {},
+        timeout=20
+    )
+
+    if not response.ok:
+        raise RuntimeError(
+            f"PuntersEdge returned HTTP {response.status_code} "
+            f"for {endpoint}"
+        )
+
+    return response.json()
+
+
+def puntersedge_tab():
+
+    st.subheader("🔌 PuntersEdge API Test")
+
+    st.caption(
+        "Read-only API testing. Existing predictions, "
+        "bets and results remain unchanged."
+    )
+
+    api_key = secret("PUNTERSEDGE_API_KEY")
+
+    if not api_key:
+        st.error(
+            "PUNTERSEDGE_API_KEY is missing from Streamlit Secrets."
+        )
+        return
+
+    st.success("PuntersEdge API key found in Secrets.")
+
+    st.info(
+        "These are exploratory API checks. Endpoint availability, "
+        "parameters and credit charges must be verified against "
+        "your PuntersEdge account documentation."
+    )
+
+    # --------------------------------------------------------
+    # TEST 1: ACCOUNT USAGE
+    # --------------------------------------------------------
+
+    with st.expander("🔑 Check API Account / Usage"):
+
+        st.write("Endpoint: /usage")
+
+        if st.button("Check API Connection", key="pe_usage"):
+
+            try:
+
+                with st.spinner("Connecting to PuntersEdge..."):
+
+                    data = puntersedge_request(
+                        "/usage",
+                        api_key
+                    )
+
+                st.success("API request successful!")
+
+                st.json(data, expanded=False)
+
+            except Exception as e:
+
+                st.error(f"API request failed: {e}")
+
+    # --------------------------------------------------------
+    # TEST 2: UPCOMING RACING EVENTS
+    # --------------------------------------------------------
+
+    with st.expander("🏇 Upcoming Racing Events"):
+
+        st.write("Endpoint: /racing/events")
+
+        if st.button("Fetch Racing Events", key="pe_events"):
+
+            try:
+
+                with st.spinner("Retrieving racing events..."):
+
+                    data = puntersedge_request(
+                        "/racing/events",
+                        api_key
+                    )
+
+                st.success("Racing API request successful!")
+
+                if isinstance(data, list):
+
+                    st.write(
+                        f"Records returned: {len(data)}"
+                    )
+
+                elif isinstance(data, dict):
+
+                    st.write(
+                        "Response fields:",
+                        list(data.keys())
+                    )
+
+                st.json(data, expanded=False)
+
+            except Exception as e:
+
+                st.error(f"Racing request failed: {e}")
+
+    # --------------------------------------------------------
+    # TEST 3: NEXT-TO-GO RACING ODDS
+    # --------------------------------------------------------
+
+    with st.expander("💰 Next-to-Go Racing Odds"):
+
+        st.write("Endpoint: /racing/next-to-go")
+
+        st.caption(
+            "Checks whether upcoming races and bookmaker "
+            "prices are available."
+        )
+
+        if st.button("Fetch Racing Odds", key="pe_odds"):
+
+            try:
+
+                with st.spinner("Retrieving racing odds..."):
+
+                    data = puntersedge_request(
+                        "/racing/next-to-go",
+                        api_key
+                    )
+
+                st.success("Racing odds request successful!")
+
+                if isinstance(data, list):
+
+                    st.write(
+                        f"Records returned: {len(data)}"
+                    )
+
+                elif isinstance(data, dict):
+
+                    st.write(
+                        "Response fields:",
+                        list(data.keys())
+                    )
+
+                st.json(data, expanded=False)
+
+            except Exception as e:
+
+                st.error(f"Odds request failed: {e}")
+
+    # --------------------------------------------------------
+    # TEST 4: AFL ODDS
+    # --------------------------------------------------------
+
+    with st.expander("🏉 AFL Odds"):
+
+        st.write("Endpoint: /sports/afl/odds")
+
+        st.caption(
+            "Tests availability of AFL bookmaker markets."
+        )
+
+        if st.button("Fetch AFL Odds", key="pe_afl"):
+
+            try:
+
+                with st.spinner("Retrieving AFL odds..."):
+
+                    data = puntersedge_request(
+                        "/sports/afl/odds",
+                        api_key
+                    )
+
+                st.success("AFL API request successful!")
+
+                st.json(data, expanded=False)
+
+            except Exception as e:
+
+                st.error(f"AFL request failed: {e}")
+
+    st.divider()
+
+    st.caption(
+        "No automatic odds saving is enabled yet. "
+        "First we need to verify the API response format "
+        "and match runners against FormFav."
+    )
 st.title('🏇 Horse Racing Predictor')
 st.caption('Australian Thoroughbred Racing | Independent Form-Based Rankings | Persistent Bet Ledger')
 try:
