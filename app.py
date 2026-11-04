@@ -347,7 +347,7 @@ if st.button("Analyse race", type="primary"):
         na_position="last",
     ).reset_index(drop=True)
 
-    df.insert("Rank", 0, range(1, len(df) + 1))
+    df.insert(0, "Rank", range(1, len(df) + 1))
 
     st.subheader("Best Chance — Form Rankings")
 
