@@ -196,6 +196,34 @@ try:
 )
 
     meetings = get_items(meetings_data, "meetings")
+    st.write("### API Meeting Diagnostics")
+
+st.write("Requested date:", selected_date.isoformat())
+
+st.write("Number of meetings returned:", len(meetings))
+
+if meetings:
+    diagnostic_rows = []
+
+    for meeting in meetings:
+        if not isinstance(meeting, dict):
+            continue
+
+        diagnostic_rows.append({
+            "Track": meeting.get("track"),
+            "Country": meeting.get("country"),
+            "Slug": meeting.get("slug"),
+            "Timezone": (
+                meeting.get("races", [{}])[0].get("timezone")
+                if meeting.get("races")
+                else None
+            ),
+        })
+
+    st.dataframe(
+        pd.DataFrame(diagnostic_rows),
+        hide_index=True,
+    )
 
 except requests.RequestException as error:
     st.error(f"Unable to retrieve meetings: {error}")
