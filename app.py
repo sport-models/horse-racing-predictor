@@ -411,6 +411,15 @@ st.caption(
 
 st.header("🏟️ Race Meetings")
 
+# ============================================================
+# MANUAL REFRESH BUTTON
+# ============================================================
+
+if st.button("🔄 Refresh Race Meetings"):
+    fetch_formfav.clear()
+    st.success("Cache cleared. Retrieving the latest race meetings...")
+    st.rerun()
+
 try:
 
     with st.spinner("Retrieving race meetings..."):
