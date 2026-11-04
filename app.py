@@ -706,7 +706,13 @@ except Exception as e:
     st.error(f'Supabase connection failed. No records can be saved until resolved: {e}')
     st.stop()
 
-t1, t2, t3, t4 = st.tabs(['🏇 Race Analysis', '💰 Bet Tracker', '🏁 Race Results', '📊 Performance'])
+t1, t2, t3, t4, t5 = st.tabs([
+    '🏇 Race Analysis',
+    '💰 Bet Tracker',
+    '🏁 Race Results',
+    '📊 Performance',
+    '🔌 API Test'
+])
 with t1:
     analysis_tab()
 with t2:
