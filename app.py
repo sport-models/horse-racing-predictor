@@ -349,25 +349,32 @@ if st.button("Analyse race", type="primary"):
 
     df.insert(0, "Rank", range(1, len(df) + 1))
 
-    st.subheader("Best Chance — Form Rankings")
+    st.subheader("🏇 Race Analysis — Ranked Runners")
 
-    st.dataframe(
-        df,
-        hide_index=True,
-        use_container_width=True,
-    )
+st.success("Race analysis completed successfully.")
+
+st.dataframe(
+    df,
+    hide_index=True,
+    use_container_width=True,
+    height=500,
+)
+
+if not df.empty:
+    rated = df.dropna(subset=["Form Score"])
+
+    if not rated.empty:
+        top_runner = rated.iloc[0]
+
+        st.info(
+            f"🏆 Highest Rated: {top_runner['Horse']} "
+            f"— Form Score: {top_runner['Form Score']:.2f}"
+        )
 
     st.caption(
         "Higher form score means a stronger preliminary "
         "rating. Scores are not win probabilities. "
         "Missing form produces an unrated runner."
-    )
-
-    st.download_button(
-        "Download race rankings",
-        df.to_csv(index=False),
-        file_name="horse_racing_rankings.csv",
-        mime="text/csv",
     )
 
     with st.expander("Inspect raw race data"):
