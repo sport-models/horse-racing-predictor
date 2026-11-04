@@ -186,13 +186,14 @@ st.subheader("Race meetings")
 
 try:
     meetings_data = fetch_formfav(
-        "/v1/form/meetings",
-        {
-            "date": selected_date.isoformat(),
-            "race_code": "gallops",
-        },
-        api_key,
-    )
+    "/v1/form/meetings",
+    {
+        "date": selected_date.isoformat(),
+        "race_code": "gallops",
+        "country": "au",
+    },
+    api_key,
+)
 
     meetings = get_items(meetings_data, "meetings")
 
