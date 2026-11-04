@@ -721,5 +721,7 @@ with t3:
     results_tab()
 with t4:
     performance_tab()
+with t5:
+    puntersedge_tab()
 st.divider()
 st.caption('Horse Racing Predictor | Model v0.2 unchanged | Database-backed tracking')
