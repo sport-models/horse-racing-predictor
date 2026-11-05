@@ -571,36 +571,204 @@ def results_tab():
     pending = [b for b in bets if b['status'] == 'Pending']
     if pending:
         bet = st.selectbox('Select pending bet', pending, format_func=lambda b: f"{b['race_date']} {b['track']} R{b['race_number']} — {b['horse']} ({b['bet_type']}, {money(b['total_stake'])})")
-        with st.form('settle_bet'):
-            position = st.number_input('Finishing position (0 = unknown or scratched)', min_value=0, max_value=99, value=0)
-            scratched = st.checkbox('Scratched / voided bet')
-            payout = st.number_input('Actual total bookmaker return ($)', min_value=0.0, value=0.0, step=0.5,
-                                     help='Enter the actual total payout, including returned stake. For a loss, enter $0. For a void, enter the refunded stake.')
-            st.caption('Enter the actual Sportsbet return to account for deductions, dead heats and place terms. Check the amount before saving.')
-            submitted = st.form_submit_button('💾 Save Result & Settle', type='primary')
+                st.markdown("### Automatic Bet Settlement")
+
+        bet_type = bet["bet_type"]
+        win_stake = float(bet.get("win_stake") or 0)
+        place_stake = float(bet.get("place_stake") or 0)
+        win_odds = float(bet.get("win_odds") or 0)
+        place_odds = float(bet.get("place_odds") or 0)
+        total_stake = float(bet["total_stake"])
+
+        c1, c2, c3 = st.columns(3)
+
+        with c1:
+            st.metric("Bet Type", bet_type)
+            st.metric("Total Stake", money(total_stake))
+
+        with c2:
+            st.metric("Win Odds", f"{win_odds:.2f}")
+            st.metric("Win Stake", money(win_stake))
+
+        with c3:
+            st.metric("Place Odds", f"{place_odds:.2f}")
+            st.metric("Place Stake", money(place_stake))
+
+        position = st.number_input(
+            "Finishing Position",
+            min_value=0,
+            max_value=99,
+            value=0,
+            help="Enter 1 for first, 2 for second, etc. Zero means unknown."
+        )
+
+        scratched = st.checkbox(
+            "Scratched / Fully Voided"
+        )
+
+        paying_places = None
+
+        if bet_type in ("Place", "Each Way") and not scratched:
+            place_option = st.selectbox(
+                "Number of Paying Places",
+                ["Select", 2, 3, 4, 5, 6],
+                help="Use the place terms applicable to this bet."
+            )
+
+            if place_option != "Select":
+                paying_places = int(place_option)
+
+        win_return = 0.0
+        place_return = 0.0
+
+        if scratched:
+            calculated_return = total_stake
+
+        elif position > 0:
+            if bet_type in ("Win", "Each Way") and position == 1:
+                win_return = win_stake * win_odds
+
+            if bet_type in ("Place", "Each Way"):
+                if paying_places is not None:
+                    if position <= paying_places:
+                        place_return = place_stake * place_odds
+
+            calculated_return = win_return + place_return
+
+        else:
+            calculated_return = 0.0
+
+        calculated_return = round(calculated_return, 2)
+
+        manual_override = st.checkbox(
+            "Manually override calculated payout",
+            help="Use for deductions, dead heats or other adjustments."
+        )
+
+        if manual_override:
+            payout = st.number_input(
+                "Actual Bookmaker Return ($)",
+                min_value=0.0,
+                value=float(calculated_return),
+                step=0.01
+            )
+        else:
+            payout = calculated_return
+
+        profit_loss = round(payout - total_stake, 2)
+
+        st.markdown("### Settlement Summary")
+
+        s1, s2, s3 = st.columns(3)
+
+        with s1:
+            st.metric("Total Stake", money(total_stake))
+
+        with s2:
+            st.metric("Total Payout", money(payout))
+
+        with s3:
+            st.metric(
+                "Profit / Loss",
+                money(profit_loss)
+            )
+
+        if manual_override:
+            st.info(
+                "Manual payout override enabled. "
+                "Check the bookmaker settlement before saving."
+            )
+
+        if scratched:
+            st.info("Fully voided bet: total stake refunded.")
+
+        can_settle = True
+
+        if not scratched and position == 0:
+            st.warning("Enter the finishing position.")
+            can_settle = False
+
+        if (
+            not scratched
+            and bet_type in ("Place", "Each Way")
+            and paying_places is None
+        ):
+            st.warning("Select the bookmaker's paying-place terms.")
+            can_settle = False
+
+        if scratched and abs(payout - total_stake) > 0.009:
+            st.error(
+                "A fully voided bet must refund the full stake."
+            )
+            can_settle = False
+
+        submitted = st.button(
+            "💾 Save Result & Settle",
+            type="primary",
+            disabled=not can_settle
+        )
+
         if submitted:
-            if scratched and abs(payout - float(bet['total_stake'])) > 0.009:
-                st.error('For a void bet, the return should equal the full refunded stake. Please check the amount.')
-            else:
-                now = datetime.now(timezone.utc).isoformat()
-                status = 'Void' if scratched else 'Settled'
-                change = {'status': status, 'total_return': round(payout, 2), 'settled_at': now, 'updated_at': now}
+            now = datetime.now(timezone.utc).isoformat()
+
+            status = "Void" if scratched else "Settled"
+
+            change = {
+                "status": status,
+                "total_return": round(payout, 2),
+                "settled_at": now,
+                "updated_at": now
+            }
+
+            try:
+                db().table("race_results").upsert(
+                    {
+                        "race_date": bet["race_date"],
+                        "track": bet["track"],
+                        "race_number": bet["race_number"],
+                        "horse": bet["horse"],
+                        "finishing_position": (
+                            None if scratched else int(position)
+                        ),
+                        "scratched": scratched,
+                        "updated_at": now
+                    },
+                    on_conflict="race_date,track,race_number,horse"
+                ).execute()
+
+                db().table("bets").update(change).eq(
+                    "id", bet["id"]
+                ).eq(
+                    "status", "Pending"
+                ).execute()
+
                 try:
-                    # Save result first; if a later write fails, report it explicitly.
-                    db().table('race_results').upsert({'race_date': bet['race_date'], 'track': bet['track'],
-                        'race_number': bet['race_number'], 'horse': bet['horse'],
-                        'finishing_position': None if position == 0 else int(position),
-                        'scratched': scratched, 'updated_at': now},
-                        on_conflict='race_date,track,race_number,horse').execute()
-                    db().table('bets').update(change).eq('id', bet['id']).eq('status', 'Pending').execute()
-                    try:
-                        audit(bet['id'], 'SETTLE', {'status': 'Pending', 'total_return': None}, change)
-                    except Exception as audit_error:
-                        st.warning(f'Bet settled but audit log failed: {audit_error}')
-                    st.success(f"✅ Settlement saved to Supabase. P/L: {money(payout - float(bet['total_stake']))}")
-                except Exception as e:
-                    st.error(f'Settlement could not be fully saved: {e}. Verify saved records before retrying.')
-    else:
+                    audit(
+                        bet["id"],
+                        "SETTLE",
+                        {
+                            "status": "Pending",
+                            "total_return": None
+                        },
+                        change
+                    )
+                except Exception as audit_error:
+                    st.warning(
+                        f"Bet settled but audit log failed: {audit_error}"
+                    )
+
+                st.success(
+                    "Settlement saved successfully. "
+                    f"Profit/Loss: {money(profit_loss)}"
+                )
+
+                st.rerun()
+
+            except Exception as e:
+                st.error(
+                    f"Settlement failed: {e}. "
+                    "Check the saved records before retrying."
+                )    else:
         st.info('No pending bets.')
     settled = [b for b in bets if b['status'] != 'Pending']
     if settled:
