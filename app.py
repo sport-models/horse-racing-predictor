@@ -182,17 +182,35 @@ def race_label(race):
     return f"Race {get_value(race, 'raceNumber', 'number', default='?')} — {get_value(race, 'raceName', 'name', default='')} {get_value(race, 'distance', default='')}"
 
 
-def snapshot_race(race_date, track, number, rankings):
-    # An immutable snapshot; one batch per race per day is allowed to preserve genuine revisions.
+
+def snapshot_race(race_date, track, number, rankings,
+                  bookmaker_quotes=None, odds_snapshot_at=None):
     batch_id = str(uuid.uuid4())
     rows = []
-    for row in rankings.to_dict('records'):
-        rows.append({'race_date': str(race_date), 'track': track, 'race_number': int(number),
-                     'horse': str(row['Horse']), 'model_rank': int(row['Rank']),
-                     'form_score': None if pd.isna(row['Form Score']) else float(row['Form Score']),
-                     'model_version': MODEL_VERSION, 'prediction_batch_id': batch_id})
-    db().table('race_predictions').insert(rows).execute()
+    bookmaker_quotes = bookmaker_quotes or {}
+
+    for row in rankings.to_dict("records"):
+        horse = str(row["Horse"])
+
+        rows.append({
+            "race_date": str(race_date),
+            "track": track,
+            "race_number": int(number),
+            "horse": horse,
+            "model_rank": int(row["Rank"]),
+            "form_score": (
+                None if pd.isna(row["Form Score"])
+                else float(row["Form Score"])
+            ),
+            "model_version": MODEL_VERSION,
+            "prediction_batch_id": batch_id,
+            "bookmaker_quotes": bookmaker_quotes.get(horse, []),
+            "odds_snapshot_at": odds_snapshot_at
+        })
+
+    db().table("race_predictions").insert(rows).execute()
     return batch_id
+
 
 
 def latest_snapshots():
@@ -210,63 +228,327 @@ def audit(bet_id, action, old, new):
                                         'previous_values': old, 'new_values': new}).execute()
 
 
+
 def bets_tab():
-    st.subheader('💰 Bet Tracker')
+    st.subheader("💰 Bet Tracker")
+
     try:
         snapshots = latest_snapshots()
-        bets = db_rows('bets', order='placed_at')
+        bets = db_rows("bets", order="placed_at")
     except Exception as e:
-        st.error(f'Database read failed: {e}')
+        st.error(f"Database read failed: {e}")
         return
+
     if not snapshots:
-        st.info('Save a race prediction in Race Analysis before recording a bet. Existing bets remain accessible here.')
+        st.info(
+            "Save a race prediction in Race Analysis "
+            "before recording a bet."
+        )
     else:
-        races = sorted(set((r['race_date'], r['track'], r['race_number']) for r in snapshots), reverse=True)
-        chosen = st.selectbox('Saved race', races, format_func=lambda x: f'{x[0]} | {x[1]} | Race {x[2]}')
-        runners = sorted((r for r in snapshots if (r['race_date'], r['track'], r['race_number']) == chosen), key=lambda r: r['model_rank'])
-        with st.form('new_bet', clear_on_submit=False):
-            runner = st.selectbox('Horse (saved model ranking)', runners, format_func=lambda r: f"#{r['model_rank']} {r['horse']} — Score {r['form_score']}")
-            kind = st.selectbox('Bet type', ['Win', 'Place', 'Each Way'])
+        races = sorted(
+            set(
+                (r["race_date"], r["track"], r["race_number"])
+                for r in snapshots
+            ),
+            reverse=True
+        )
+
+        chosen = st.selectbox(
+            "Saved race",
+            races,
+            format_func=lambda x:
+                f"{x[0]} | {x[1]} | Race {x[2]}"
+        )
+
+        runners = sorted(
+            (
+                r for r in snapshots
+                if (
+                    r["race_date"],
+                    r["track"],
+                    r["race_number"]
+                ) == chosen
+            ),
+            key=lambda r: r["model_rank"]
+        )
+
+        # Runner selection is deliberately outside the form,
+        # so changing horses refreshes the reference odds.
+        runner_index = st.selectbox(
+            "Horse (saved model ranking)",
+            range(len(runners)),
+            format_func=lambda i:
+                f"#{runners[i]['model_rank']} "
+                f"{runners[i]['horse']} — "
+                f"Score {runners[i]['form_score']}"
+        )
+
+        runner = runners[runner_index]
+        quotes = runner.get("bookmaker_quotes") or []
+
+        current_quotes = [
+            q for q in quotes
+            if isinstance(q, dict)
+            and not q.get("stale", True)
+        ]
+
+        available_books = sorted(
+            set(
+                q.get("bookmaker")
+                for q in current_quotes
+                if q.get("bookmaker")
+            )
+        )
+
+        options = ["Best available", "Manual entry"]
+        options += available_books
+
+        default_option = (
+            "sportsbet" if "sportsbet" in available_books
+            else "Best available"
+        )
+
+        bookmaker = st.selectbox(
+            "Reference bookmaker",
+            options,
+            index=options.index(default_option)
+        )
+
+        if bookmaker == "Best available":
+            win_quote = odds_best(current_quotes, "win")
+            place_quote = odds_best(current_quotes, "place")
+
+        elif bookmaker == "Manual entry":
+            win_quote = None
+            place_quote = None
+
+        else:
+            selected_quote = next(
+                (
+                    q for q in current_quotes
+                    if q["bookmaker"] == bookmaker
+                ),
+                None
+            )
+
+            win_quote = (
+                selected_quote
+                if selected_quote
+                and selected_quote.get("win") is not None
+                else None
+            )
+
+            place_quote = (
+                selected_quote
+                if selected_quote
+                and selected_quote.get("place") is not None
+                else None
+            )
+
+        reference_win = (
+            win_quote.get("win") if win_quote else None
+        )
+        reference_place = (
+            place_quote.get("place") if place_quote else None
+        )
+
+        win_default = float(reference_win or 2.0)
+        place_default = float(reference_place or 1.5)
+
+        st.caption(
+            "Odds below are pre-filled from the saved "
+            "prediction snapshot, not refreshed live. "
+            "You can override them before saving."
+        )
+
+        if not quotes:
+            st.warning(
+                "No bookmaker snapshot was saved for this horse. "
+                "Enter the actual odds manually."
+            )
+
+        with st.form(
+            "new_bet_" + str(runner["id"]) + "_" +
+            bookmaker.replace(" ", "_"),
+            clear_on_submit=False
+        ):
+            kind = st.selectbox(
+                "Bet type",
+                ["Win", "Place", "Each Way"]
+            )
+
             c1, c2 = st.columns(2)
-            win_odds = c1.number_input('Win odds (decimal)', min_value=1.01, value=2.0, step=0.1)
-            place_odds = c2.number_input('Place odds (decimal)', min_value=1.01, value=1.5, step=0.1)
+
+            win_odds = c1.number_input(
+                "Win odds (decimal)",
+                min_value=1.01,
+                value=max(1.01, win_default),
+                step=0.1
+            )
+
+            place_odds = c2.number_input(
+                "Place odds (decimal)",
+                min_value=1.01,
+                value=max(1.01, place_default),
+                step=0.1
+            )
+
             c3, c4 = st.columns(2)
-            win_stake = c3.number_input('Win stake ($)', min_value=0.0, value=5.0, step=0.5)
-            place_stake = c4.number_input('Place stake ($)', min_value=0.0, value=5.0, step=0.5)
-            st.caption('Each Way: enter the win and place portions separately. A $5 each-way bet costs $10 total.')
-            submitted = st.form_submit_button('💾 Save Bet', type='primary')
+
+            win_stake = c3.number_input(
+                "Win stake ($)",
+                min_value=0.0,
+                value=5.0,
+                step=0.5
+            )
+
+            place_stake = c4.number_input(
+                "Place stake ($)",
+                min_value=0.0,
+                value=5.0,
+                step=0.5
+            )
+
+            st.caption(
+                "Each Way: enter the win and place "
+                "portions separately."
+            )
+
+            submitted = st.form_submit_button(
+                "💾 Save Bet",
+                type="primary"
+            )
+
         if submitted:
-            valid = ((kind == 'Win' and win_stake > 0 and place_stake == 0) or
-                     (kind == 'Place' and place_stake > 0 and win_stake == 0) or
-                     (kind == 'Each Way' and win_stake > 0 and place_stake > 0))
+            valid = (
+                (
+                    kind == "Win"
+                    and win_stake > 0
+                    and place_stake == 0
+                )
+                or (
+                    kind == "Place"
+                    and place_stake > 0
+                    and win_stake == 0
+                )
+                or (
+                    kind == "Each Way"
+                    and win_stake > 0
+                    and place_stake > 0
+                )
+            )
+
             if not valid:
-                st.error('Stake allocation does not match bet type. Win requires win stake only; Place requires place stake only; Each Way requires both.')
+                st.error(
+                    "Stake allocation does not match bet type."
+                )
             else:
-                duplicate = any(b['race_date'] == chosen[0] and b['track'] == chosen[1] and
-                                int(b['race_number']) == chosen[2] and b['horse'] == runner['horse'] and
-                                b['bet_type'] == kind and b['status'] == 'Pending' for b in bets)
+                duplicate = any(
+                    b["race_date"] == chosen[0]
+                    and b["track"] == chosen[1]
+                    and int(b["race_number"]) == chosen[2]
+                    and b["horse"] == runner["horse"]
+                    and b["bet_type"] == kind
+                    and b["status"] == "Pending"
+                    for b in bets
+                )
+
                 if duplicate:
-                    st.error('A pending bet already exists for this horse and bet type. No duplicate was saved.')
+                    st.error(
+                        "A pending bet already exists for "
+                        "this horse and bet type."
+                    )
                 else:
-                    record = {'prediction_id': runner['id'], 'race_date': chosen[0], 'track': chosen[1],
-                              'race_number': chosen[2], 'horse': runner['horse'], 'bet_type': kind,
-                              'win_odds': win_odds if kind != 'Place' else None,
-                              'place_odds': place_odds if kind != 'Win' else None,
-                              'win_stake': win_stake if kind != 'Place' else 0,
-                              'place_stake': place_stake if kind != 'Win' else 0, 'status': 'Pending'}
+                    record = {
+                        "prediction_id": runner["id"],
+                        "race_date": chosen[0],
+                        "track": chosen[1],
+                        "race_number": chosen[2],
+                        "horse": runner["horse"],
+                        "bet_type": kind,
+                        "win_odds": (
+                            win_odds
+                            if kind != "Place" else None
+                        ),
+                        "place_odds": (
+                            place_odds
+                            if kind != "Win" else None
+                        ),
+                        "win_stake": (
+                            win_stake
+                            if kind != "Place" else 0
+                        ),
+                        "place_stake": (
+                            place_stake
+                            if kind != "Win" else 0
+                        ),
+                        "status": "Pending",
+                        "reference_bookmaker": bookmaker,
+                        "reference_win_bookmaker": (
+                            win_quote.get("bookmaker")
+                            if win_quote else None
+                        ),
+                        "reference_place_bookmaker": (
+                            place_quote.get("bookmaker")
+                            if place_quote else None
+                        ),
+                        "reference_win_odds": reference_win,
+                        "reference_place_odds": reference_place,
+                        "reference_win_updated_at": (
+                            win_quote.get("last_update")
+                            if win_quote else None
+                        ),
+                        "reference_place_updated_at": (
+                            place_quote.get("last_update")
+                            if place_quote else None
+                        )
+                    }
+
                     try:
-                        saved = db().table('bets').insert(record).execute().data
+                        saved = (
+                            db().table("bets")
+                            .insert(record).execute().data
+                        )
+
                         if not saved:
-                            raise RuntimeError('No saved row was returned')
-                        st.success(f"✅ Bet saved permanently to Supabase: {runner['horse']} — {money(record['win_stake'] + record['place_stake'])}")
+                            raise RuntimeError(
+                                "No saved row was returned"
+                            )
+
+                        st.success(
+                            "✅ Bet saved permanently to Supabase: "
+                            + runner["horse"]
+                        )
+
                     except Exception as e:
-                        st.error(f'Bet was NOT confirmed saved: {e}')
+                        st.error(
+                            f"Bet was NOT confirmed saved: {e}"
+                        )
+
     if bets:
-        st.subheader('Saved bets')
+        st.subheader("Saved bets")
+
         show = pd.DataFrame(bets)
-        columns = ['race_date', 'track', 'race_number', 'horse', 'bet_type', 'win_odds', 'place_odds',
-                   'win_stake', 'place_stake', 'total_stake', 'status', 'total_return', 'profit_loss']
-        st.dataframe(show[columns], hide_index=True, use_container_width=True)
+
+        columns = [
+            "race_date", "track", "race_number",
+            "horse", "bet_type", "win_odds",
+            "place_odds", "win_stake", "place_stake",
+            "total_stake", "status",
+            "total_return", "profit_loss",
+            "reference_bookmaker",
+            "reference_win_bookmaker",
+            "reference_place_bookmaker",
+            "reference_win_odds",
+            "reference_place_odds"
+        ]
+
+        st.dataframe(
+            show[[c for c in columns if c in show.columns]],
+            hide_index=True,
+            use_container_width=True
+        )
+
 
 
 def results_tab():
@@ -468,6 +750,109 @@ def analysis_tab():
         st.success(f"🏆 Best Chance: {top['Horse']} — Form Score {top['Form Score']:.2f}")
     st.subheader('📊 Full Race Rankings')
     st.dataframe(df, hide_index=True, use_container_width=True)
+
+    # v0.3 bookmaker prices are displayed separately from
+    # the model's independent form-based rankings.
+    quotes_by_horse = {}
+    odds_rows = []
+
+    pe_key = secret("PUNTERSEDGE_API_KEY")
+
+    if pe_key:
+        try:
+            with st.spinner("Retrieving bookmaker prices..."):
+                odds_payload = fetch_live_racing_odds(
+                    pe_key, analysis["track"]
+                )
+
+            matched_event = odds_find_race(
+                odds_payload,
+                analysis["date"],
+                analysis["track"],
+                analysis["race_number"]
+            )
+
+            if matched_event is None:
+                st.warning(
+                    "No unique matching Australian thoroughbred "
+                    "race found in the live odds feed."
+                )
+            else:
+                for horse in df["Horse"]:
+                    quotes = odds_runner_quotes(
+                        matched_event, horse
+                    )
+                    quotes_by_horse[str(horse)] = quotes
+
+        except Exception as odds_error:
+            st.warning(
+                f"Bookmaker odds unavailable: {odds_error}"
+            )
+    else:
+        st.info(
+            "PUNTERSEDGE_API_KEY is not configured. "
+            "Model rankings remain available."
+        )
+
+    for _, model_row in df.iterrows():
+        horse = str(model_row["Horse"])
+        quotes = quotes_by_horse.get(horse, [])
+        summary = odds_summary(quotes)
+
+        odds_rows.append({
+            "Horse": horse,
+            "Sportsbet Win": summary["sportsbet_win"],
+            "Sportsbet Place": summary["sportsbet_place"],
+            "Best Win": summary["best_win"],
+            "Best Win Book": summary["best_win_bookmaker"],
+            "Best Place": summary["best_place"],
+            "Best Place Book": summary["best_place_bookmaker"]
+        })
+
+    odds_df = pd.DataFrame(odds_rows)
+
+    display_df = df.merge(
+        odds_df,
+        on="Horse",
+        how="left",
+        validate="one_to_one"
+    )
+
+    st.subheader("💰 Sportsbet & Best Available Odds")
+    st.dataframe(
+        display_df,
+        hide_index=True,
+        use_container_width=True
+    )
+
+    with st.expander("Compare all bookmakers"):
+        comparison = []
+
+        for horse, quotes in quotes_by_horse.items():
+            for quote in quotes:
+                comparison.append({
+                    "Horse": horse,
+                    "Bookmaker": quote["bookmaker"],
+                    "Win": quote["win"],
+                    "Place": quote["place"],
+                    "Stale": quote["stale"],
+                    "Last Updated": quote["last_update"]
+                })
+
+        if comparison:
+            st.dataframe(
+                pd.DataFrame(comparison),
+                hide_index=True,
+                use_container_width=True
+            )
+        else:
+            st.info("No matching bookmaker quotes available.")
+
+    analysis["bookmaker_quotes"] = quotes_by_horse
+    analysis["odds_snapshot_at"] = (
+        datetime.now(timezone.utc).isoformat()
+    )
+
     st.subheader('⭐ Top Five Model Selections')
     st.dataframe(df.head(5), hide_index=True, use_container_width=True)
     with st.expander('How rankings are calculated'):
@@ -480,7 +865,14 @@ def analysis_tab():
     if selected_date >= date.today():
         if st.button('🔒 Save & Lock All Race Predictions', type='primary'):
             try:
-                batch = snapshot_race(analysis['date'], analysis['track'], analysis['race_number'], df)
+                batch = snapshot_race(
+                    analysis['date'],
+                    analysis['track'],
+                    analysis['race_number'],
+                    df,
+                    analysis.get('bookmaker_quotes', {}),
+                    analysis.get('odds_snapshot_at')
+                )
                 st.success(f'✅ {len(df)} predictions permanently saved to Supabase (batch {batch[:8]}). Open Bet Tracker to enter odds and stakes.')
             except Exception as e:
                 st.error(f'Predictions were NOT confirmed saved: {e}')
@@ -496,6 +888,175 @@ def analysis_tab():
 # ============================================================
 
 PUNTERSEDGE_BASE_URL = "https://api.puntersedge.online/v1"
+
+
+
+ODDS_INTEGRATION_VERSION = 'v0.3'
+
+def odds_horse_name(name):
+    import re
+    return re.sub(
+        r"[^a-z0-9]",
+        "",
+        str(name or "").casefold()
+    )
+
+
+def odds_track_name(name):
+    import re
+    return re.sub(
+        r"[^a-z0-9]",
+        "",
+        str(name or "").casefold()
+    )
+
+
+def odds_price(value):
+    try:
+        price = float(value)
+        return price if price > 1.0 else None
+    except (TypeError, ValueError):
+        return None
+
+
+def odds_race_date(event):
+    from datetime import datetime
+    value = event.get("start_time")
+    if not value:
+        return None
+
+    try:
+        from zoneinfo import ZoneInfo
+        dt = datetime.fromisoformat(
+            str(value).replace("Z", "+00:00")
+        )
+        return dt.astimezone(
+            ZoneInfo("Australia/Melbourne")
+        ).date().isoformat()
+    except (ValueError, TypeError):
+        return None
+
+
+def odds_events(payload):
+    if isinstance(payload, list):
+        return payload
+
+    if not isinstance(payload, dict):
+        return []
+
+    for key in ("races", "events", "data"):
+        value = payload.get(key)
+
+        if isinstance(value, list):
+            return value
+
+        if isinstance(value, dict):
+            for nested_key in ("races", "events"):
+                nested = value.get(nested_key)
+                if isinstance(nested, list):
+                    return nested
+
+    return []
+
+
+def odds_find_race(payload, race_date, track, race_number):
+    matches = []
+
+    for event in odds_events(payload):
+        if not isinstance(event, dict):
+            continue
+
+        if str(event.get("country", "")).upper() != "AU":
+            continue
+
+        if str(event.get("category", "")).lower() != "horse":
+            continue
+
+        if odds_track_name(event.get("venue")) != odds_track_name(track):
+            continue
+
+        try:
+            number = int(event.get("race_number"))
+        except (TypeError, ValueError):
+            continue
+
+        if number != int(race_number):
+            continue
+
+        if odds_race_date(event) != str(race_date):
+            continue
+
+        matches.append(event)
+
+    # Ambiguous matching must not silently select a race.
+    return matches[0] if len(matches) == 1 else None
+
+
+def odds_runner_quotes(event, horse):
+    matches = [
+        runner for runner in event.get("runners", [])
+        if isinstance(runner, dict)
+        and odds_horse_name(runner.get("name")) == odds_horse_name(horse)
+    ]
+
+    if len(matches) != 1:
+        return []
+
+    quotes = []
+
+    for book in matches[0].get("bookmakers", []):
+        if not isinstance(book, dict):
+            continue
+
+        quotes.append({
+            "bookmaker": str(book.get("key", "")).lower(),
+            "win": odds_price(book.get("win_price")),
+            "place": odds_price(book.get("place_price")),
+            "stale": book.get("stale") is not False,
+            "last_update": book.get("last_update"),
+            "source_url": book.get("source_url"),
+        })
+
+    return quotes
+
+
+def odds_best(quotes, market):
+    eligible = [
+        quote for quote in quotes
+        if not quote["stale"]
+        and quote.get(market) is not None
+    ]
+
+    if not eligible:
+        return None
+
+    return max(
+        eligible,
+        key=lambda quote: quote[market]
+    )
+
+
+def odds_sportsbet(quotes):
+    for quote in quotes:
+        if quote["bookmaker"] == "sportsbet" and not quote["stale"]:
+            return quote
+
+    return None
+
+
+def odds_summary(quotes):
+    sportsbet = odds_sportsbet(quotes)
+    best_win = odds_best(quotes, "win")
+    best_place = odds_best(quotes, "place")
+
+    return {
+        "sportsbet_win": sportsbet["win"] if sportsbet else None,
+        "sportsbet_place": sportsbet["place"] if sportsbet else None,
+        "best_win": best_win["win"] if best_win else None,
+        "best_win_bookmaker": best_win["bookmaker"] if best_win else None,
+        "best_place": best_place["place"] if best_place else None,
+        "best_place_bookmaker": best_place["bookmaker"] if best_place else None,
+    }
 
 
 def puntersedge_request(endpoint, api_key, params=None):
@@ -521,6 +1082,22 @@ def puntersedge_request(endpoint, api_key, params=None):
         )
 
     return response.json()
+
+
+
+@st.cache_data(ttl=30, show_spinner=False)
+def fetch_live_racing_odds(api_key, track):
+    return puntersedge_request(
+        "/racing/next-to-go",
+        api_key,
+        {
+            "country": "AU",
+            "categories": "horse",
+            "include_unresolved": "true",
+            "venue": track,
+            "num_races": 20
+        }
+    )
 
 
 def puntersedge_tab():
@@ -737,4 +1314,4 @@ with t4:
 with t5:
     puntersedge_tab()
 st.divider()
-st.caption('Horse Racing Predictor | Model v0.2 unchanged | Database-backed tracking')
+st.caption('Horse Racing Predictor | Model v0.2 | Odds Integration v0.3 | Database-backed tracking')
