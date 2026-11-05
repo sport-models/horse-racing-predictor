@@ -1,3 +1,4 @@
+import v04_validation
 import os
 import re
 import hmac
@@ -1303,11 +1304,12 @@ except Exception as e:
     st.error(f'Supabase connection failed. No records can be saved until resolved: {e}')
     st.stop()
 
-t1, t2, t3, t4, t5 = st.tabs([
+t1, t2, t3, t4, t5, t6 = st.tabs([
     '🏇 Race Analysis',
     '💰 Bet Tracker',
     '🏁 Race Results',
     '📊 Performance',
+    '🧪 Model Validation',
     '🔌 API Test'
 ])
 with t1:
@@ -1319,6 +1321,8 @@ with t3:
 with t4:
     performance_tab()
 with t5:
+    v04_validation.render(db_rows)
+with t6:
     puntersedge_tab()
 st.divider()
 st.caption('Horse Racing Predictor | Model v0.2 | Odds Integration v0.3 | Database-backed tracking')
