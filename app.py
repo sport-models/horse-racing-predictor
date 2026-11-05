@@ -399,18 +399,21 @@ def bets_tab():
 
             c3, c4 = st.columns(2)
 
+            
             win_stake = c3.number_input(
                 "Win stake ($)",
                 min_value=0.0,
-                value=5.0,
-                step=0.5
+                value=5.0 if kind != "Place" else 0.0,
+                step=0.5,
+                disabled=(kind == "Place")
             )
 
             place_stake = c4.number_input(
                 "Place stake ($)",
                 min_value=0.0,
-                value=5.0,
-                step=0.5
+                value=5.0 if kind != "Win" else 0.0,
+                step=0.5,
+                disabled=(kind == "Win")
             )
 
             st.caption(
