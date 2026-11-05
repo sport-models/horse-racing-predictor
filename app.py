@@ -768,7 +768,8 @@ def results_tab():
                 st.error(
                     f"Settlement failed: {e}. "
                     "Check the saved records before retrying."
-                )    else:
+                )    
+    else:
         st.info('No pending bets.')
     settled = [b for b in bets if b['status'] != 'Pending']
     if settled:
