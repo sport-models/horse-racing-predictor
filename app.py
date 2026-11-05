@@ -589,16 +589,16 @@ def puntersedge_tab():
 
                 with st.spinner("Retrieving racing events..."):
 
-                    data = puntersedge_request(
-    "/racing/events",
-    api_key,
-    {
-        "country": "AU",
-        "categories": "horse",
-        "include_unresolved": "true",
-        "date": "2026-11-05"
-    }
-)
+                                        data = puntersedge_request(
+                        "/racing/events",
+                        api_key,
+                        {
+                            "country": "AU",
+                            "categories": "horse",
+                            "include_unresolved": "true",
+                            "date": "2026-11-05"
+                        }
+                    )
 
                 st.success("Racing API request successful!")
 
@@ -634,21 +634,22 @@ def puntersedge_tab():
             "prices are available."
         )
 
-        data = puntersedge_request(
-    "/racing/next-to-go",
-    api_key,
-    {
-        "country": "AU",
-        "categories": "horse",
-        "include_unresolved": "true",
-        "venue": "Flemington",
-        "num_races": 20
-    }
-)                with st.spinner("Retrieving racing odds..."):
+                if st.button("Fetch Racing Odds", key="pe_odds"):
+
+            try:
+
+                with st.spinner("Retrieving racing odds..."):
 
                     data = puntersedge_request(
                         "/racing/next-to-go",
-                        api_key
+                        api_key,
+                        {
+                            "country": "AU",
+                            "categories": "horse",
+                            "include_unresolved": "true",
+                            "venue": "Flemington",
+                            "num_races": 20
+                        }
                     )
 
                 st.success("Racing odds request successful!")
