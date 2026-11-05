@@ -367,15 +367,19 @@ def bets_tab():
                 "Enter the actual odds manually."
             )
 
+        
+        kind = st.selectbox(
+            "Bet type",
+            ["Win", "Place", "Each Way"],
+            key="bet_type_" + str(runner["id"])
+        )
+
         with st.form(
             "new_bet_" + str(runner["id"]) + "_" +
-            bookmaker.replace(" ", "_"),
+            bookmaker.replace(" ", "_") + "_" +
+            kind.replace(" ", "_"),
             clear_on_submit=False
         ):
-            kind = st.selectbox(
-                "Bet type",
-                ["Win", "Place", "Each Way"]
-            )
 
             c1, c2 = st.columns(2)
 
