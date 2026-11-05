@@ -571,7 +571,7 @@ def results_tab():
     pending = [b for b in bets if b['status'] == 'Pending']
     if pending:
         bet = st.selectbox('Select pending bet', pending, format_func=lambda b: f"{b['race_date']} {b['track']} R{b['race_number']} — {b['horse']} ({b['bet_type']}, {money(b['total_stake'])})")
-                st.markdown("### Automatic Bet Settlement")
+        st.markdown("### Automatic Bet Settlement")
 
         bet_type = bet["bet_type"]
         win_stake = float(bet.get("win_stake") or 0)
