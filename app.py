@@ -634,7 +634,7 @@ def puntersedge_tab():
             "prices are available."
         )
 
-                if st.button("Fetch Racing Odds", key="pe_odds"):
+        if st.button("Fetch Racing Odds", key="pe_odds"):
 
             try:
 
