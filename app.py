@@ -1,3 +1,4 @@
+import v042_results
 import formfav_results_probe
 import v04_validation
 import os
@@ -1488,6 +1489,8 @@ with t2:
     bets_tab()
 with t3:
     results_tab()
+    st.divider()
+    v042_results.render(db_rows, db, secret)
 with t4:
     performance_tab()
 with t5:
