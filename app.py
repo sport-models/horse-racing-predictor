@@ -1496,9 +1496,6 @@ with t3:
 with t4:
     performance_tab()
 with t5:
-    v04_validation.render(db_rows)
-
-    st.divider()
     v043_full_field.render(db_rows)
 with t6:
     puntersedge_tab()
