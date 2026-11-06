@@ -1,3 +1,4 @@
+import v044_bulk_results
 import v043_full_field
 import v042_results
 import formfav_results_probe
@@ -1493,6 +1494,8 @@ with t3:
     results_tab()
     st.divider()
     v042_results.render(db_rows, db, secret)
+    st.divider()
+    v044_bulk_results.render(db_rows, db, secret)
 with t4:
     performance_tab()
 with t5:
