@@ -1,3 +1,4 @@
+import formfav_results_probe
 import v04_validation
 import os
 import re
@@ -1493,5 +1494,7 @@ with t5:
     v04_validation.render(db_rows)
 with t6:
     puntersedge_tab()
+    st.divider()
+    formfav_results_probe.render(db_rows, secret)
 st.divider()
 st.caption('Horse Racing Predictor | Model v0.2 | Odds Integration v0.3 | Database-backed tracking')
