@@ -1,3 +1,5 @@
+import v057a_market_benchmark
+import v045_result_lookup
 import v044_bulk_results
 import v043_full_field
 import v042_results
@@ -575,9 +577,28 @@ def results_tab():
         st.info('No saved bets yet.')
         return
     pending = [b for b in bets if b['status'] == 'Pending']
+    try:
+        imported_results = db_rows('runner_results', order=None)
+        result_lookup = v045_result_lookup.result_index(imported_results)
+    except Exception as exc:
+        st.warning(f'Imported placings unavailable: {exc}. Manual entry remains available.')
+        result_lookup = {}
+    if pending:
+        ready = sum(v045_result_lookup.lookup(b, result_lookup)['state'] == 'ready' for b in pending)
+        st.info(f'{ready} of {len(pending)} pending bets have imported official placings awaiting your review. No automatic settlements.')
     if pending:
         bet = st.selectbox('Select pending bet', pending, format_func=lambda b: f"{b['race_date']} {b['track']} R{b['race_number']} — {b['horse']} ({b['bet_type']}, {money(b['total_stake'])})")
-        st.markdown("### Automatic Bet Settlement")
+        st.markdown("### Review & Manually Confirm Settlement")
+        official = v045_result_lookup.lookup(bet, result_lookup)
+        if official['state'] == 'ready':
+            label = 'SCRATCHED' if official['scratched'] else f"{official['position']}"
+            st.success(f'Imported official result: {label}. Bet remains Pending until you confirm settlement.')
+        elif official['state'] == 'ambiguous':
+            st.error('Multiple imported results match this horse. Resolve duplicates before settling.')
+        elif official['state'] == 'invalid':
+            st.error('Imported result is invalid or not final. Verify manually before settling.')
+        else:
+            st.info('No imported result found for this bet. Manual entry remains available.')
 
         bet_type = bet["bet_type"]
         win_stake = float(bet.get("win_stake") or 0)
@@ -604,12 +625,15 @@ def results_tab():
             "Finishing Position",
             min_value=0,
             max_value=99,
-            value=0,
-            help="Enter 1 for first, 2 for second, etc. Zero means unknown."
+            value=official['position'] if official['state'] == 'ready' and not official['scratched'] else 0,
+            key=f"v045_position_{bet['id']}",
+            help="Pre-filled from official results when available; review before settlement."
         )
 
         scratched = st.checkbox(
-            "Scratched / Fully Voided"
+            "Scratched / Fully Voided",
+            value=official['scratched'] if official['state'] == 'ready' else False,
+            key=f"v045_scratched_{bet['id']}"
         )
 
         paying_places = None
@@ -688,7 +712,7 @@ def results_tab():
         if scratched:
             st.info("Fully voided bet: total stake refunded.")
 
-        can_settle = True
+        can_settle = official['state'] not in ('ambiguous', 'invalid')
 
         if not scratched and position == 0:
             st.warning("Enter the finishing position.")
@@ -1500,6 +1524,8 @@ with t4:
     performance_tab()
 with t5:
     v043_full_field.render(db_rows)
+    st.divider()
+    v057a_market_benchmark.render(db_rows)
 with t6:
     puntersedge_tab()
     st.divider()
