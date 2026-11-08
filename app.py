@@ -1,3 +1,4 @@
+import v057e_strategy_benchmark
 import v057c_corrected_benchmark
 import v057b_coverage_diagnostics
 import v057a_market_benchmark
@@ -1528,6 +1529,8 @@ with t5:
     v043_full_field.render(db_rows)
     st.divider()
     v057c_corrected_benchmark.render(db_rows)
+    st.divider()
+    v057e_strategy_benchmark.render(db_rows)
     st.divider()
     v057a_market_benchmark.render(db_rows)
     st.divider()
