@@ -1,4 +1,7 @@
 import v057g_each_way_benchmark
+# v0.5.8 PROMO & FIELD SIZE INSTALLED
+import v058_field_size
+import v058_promotions
 import v057f_repaired_benchmark
 from v057f_odds_integrity import make_snapshot_quote
 import v057e_strategy_benchmark
@@ -417,7 +420,7 @@ def bets_tab():
             win_stake = c3.number_input(
                 "Win stake ($)",
                 min_value=0.0,
-                value=5.0 if kind != "Place" else 0.0,
+                value=10.0 if kind != "Place" else 0.0,
                 step=0.5,
                 disabled=(kind == "Place")
             )
@@ -425,7 +428,7 @@ def bets_tab():
             place_stake = c4.number_input(
                 "Place stake ($)",
                 min_value=0.0,
-                value=5.0 if kind != "Win" else 0.0,
+                value=10.0 if kind != "Win" else 0.0,
                 step=0.5,
                 disabled=(kind == "Win")
             )
@@ -434,6 +437,42 @@ def bets_tab():
                 "Each Way: enter the win and place "
                 "portions separately."
             )
+            st.caption("Your rule: place odds below $2 → $10 Win; "
+                       "$2 or higher → $10 Win + $10 Place (each-way). "
+                       "Suggested from entered place odds: " +
+                       ("Win" if place_odds < 2.0 else "Each Way") +
+                       ". Bet type remains your manual choice.")
+
+            promo_label = st.selectbox(
+                "Promotion / stake funding",
+                list(v058_promotions.DISPLAY),
+                help=("A 'stake returned as bonus' offer is NOT cash. "
+                      "Record any credited bonus only after bookmaker confirmation. "
+                      "A bonus bet used normally does not return its bonus stake when it wins."),
+                key="v058_promo_" + str(runner["id"])
+            )
+            promo_mode = v058_promotions.DISPLAY[promo_label]
+            bonus_win_stake = 0.0
+            bonus_place_stake = 0.0
+            if promo_mode == v058_promotions.BONUS:
+                st.caption("Enter the actual bonus-funded amount for each bet component. "
+                           "The remainder is cash. For each-way, specify which portion used a bonus.")
+                pc1, pc2 = st.columns(2)
+                bonus_win_stake = pc1.number_input(
+                    "Win portion funded by bonus ($)", min_value=0.0,
+                    value=0.0, step=0.5,
+                    disabled=(kind == "Place"),
+                    key="v058_bonus_win_" + str(runner["id"])
+                )
+                bonus_place_stake = pc2.number_input(
+                    "Place portion funded by bonus ($)", min_value=0.0,
+                    value=0.0, step=0.5,
+                    disabled=(kind == "Win"),
+                    key="v058_bonus_place_" + str(runner["id"])
+                )
+            if promo_mode == v058_promotions.REFUND:
+                st.info("Offer noted only. Actual bonus credit is recorded on settlement "
+                        "after confirming the bookmaker's terms and credit.")
 
             submitted = st.form_submit_button(
                 "💾 Save Bet",
@@ -459,10 +498,13 @@ def bets_tab():
                 )
             )
 
-            if not valid:
-                st.error(
-                    "Stake allocation does not match bet type."
-                )
+            promo_valid, promo_reason = v058_promotions.validate_promotion(
+                kind, promo_mode, win_stake, place_stake,
+                bonus_win_stake, bonus_place_stake
+            )
+            if not valid or not promo_valid:
+                st.error("Invalid bet or promotion allocation: " +
+                         (promo_reason if not promo_valid else "stake allocation does not match bet type"))
             else:
                 duplicate = any(
                     b["race_date"] == chosen[0]
@@ -504,6 +546,10 @@ def bets_tab():
                             if kind != "Win" else 0
                         ),
                         "status": "Pending",
+                        "promo_mode": promo_mode,
+                        "bonus_win_stake": bonus_win_stake,
+                        "bonus_place_stake": bonus_place_stake,
+                        "bonus_credit_value": 0.0,
                         "reference_bookmaker": bookmaker,
                         "reference_win_bookmaker": (
                             win_quote.get("bookmaker")
@@ -550,13 +596,20 @@ def bets_tab():
         st.subheader("Saved bets")
 
         show = pd.DataFrame(bets)
+        show["Cash stake"] = [v058_promotions.cash_stake(b) for b in bets]
+        show["Cash P/L"] = [
+            v058_promotions.cash_profit(b) if b.get("status") == "Settled" else None
+            for b in bets
+        ]
 
         columns = [
             "race_date", "track", "race_number",
             "horse", "bet_type", "win_odds",
             "place_odds", "win_stake", "place_stake",
             "total_stake", "status",
-            "total_return", "profit_loss",
+            "total_return", "Cash stake", "Cash P/L",
+            "promo_mode", "bonus_win_stake", "bonus_place_stake",
+            "bonus_credit_value",
             "reference_bookmaker",
             "reference_win_bookmaker",
             "reference_place_bookmaker",
@@ -612,6 +665,16 @@ def results_tab():
         win_odds = float(bet.get("win_odds") or 0)
         place_odds = float(bet.get("place_odds") or 0)
         total_stake = float(bet["total_stake"])
+        cash_outlay = v058_promotions.cash_stake(bet)
+        promo_mode = bet.get("promo_mode") or v058_promotions.NONE
+        bonus_total = total_stake - cash_outlay
+
+        if promo_mode == v058_promotions.REFUND:
+            st.info("Money-back-as-bonus offer recorded. A bonus credit is NOT cash "
+                    "and is recorded only after it is actually awarded.")
+        if promo_mode == v058_promotions.BONUS:
+            st.info(f"Bonus stake used: ${bonus_total:,.2f}. Cash stake: "
+                    f"${cash_outlay:,.2f}. Bonus stake is excluded from winning cash returns.")
 
         c1, c2, c3 = st.columns(3)
 
@@ -654,27 +717,9 @@ def results_tab():
             if place_option != "Select":
                 paying_places = int(place_option)
 
-        win_return = 0.0
-        place_return = 0.0
-
-        if scratched:
-            calculated_return = total_stake
-
-        elif position > 0:
-            if bet_type in ("Win", "Each Way") and position == 1:
-                win_return = win_stake * win_odds
-
-            if bet_type in ("Place", "Each Way"):
-                if paying_places is not None:
-                    if position <= paying_places:
-                        place_return = place_stake * place_odds
-
-            calculated_return = win_return + place_return
-
-        else:
-            calculated_return = 0.0
-
-        calculated_return = round(calculated_return, 2)
+        calculated_return = v058_promotions.calculated_cash_payout(
+            bet, int(position), paying_places=paying_places, scratched=scratched
+        )
 
         manual_override = st.checkbox(
             "Manually override calculated payout",
@@ -691,7 +736,24 @@ def results_tab():
         else:
             payout = calculated_return
 
-        profit_loss = round(payout - total_stake, 2)
+        bonus_credit_value = 0.0
+        credit_verified = False
+        if promo_mode == v058_promotions.REFUND:
+            bonus_credit_value = st.number_input(
+                "Bonus credit ACTUALLY awarded by bookmaker ($)",
+                min_value=0.0,
+                value=float(bet.get("bonus_credit_value") or 0),
+                step=0.5,
+                key="v058_bonus_credit_" + str(bet["id"]),
+                help="Enter 0 until awarded. A promotional bonus is not cash return."
+            )
+            if bonus_credit_value > 0:
+                credit_verified = st.checkbox(
+                    "I checked that the bookmaker has issued this bonus credit",
+                    key="v058_bonus_credit_verified_" + str(bet["id"])
+                )
+
+        profit_loss = round(payout - cash_outlay, 2)
 
         st.markdown("### Settlement Summary")
 
@@ -699,15 +761,18 @@ def results_tab():
 
         with s1:
             st.metric("Total Stake", money(total_stake))
+            st.caption(f"Cash outlay: {money(cash_outlay)}; bonus used: {money(bonus_total)}")
 
         with s2:
             st.metric("Total Payout", money(payout))
 
         with s3:
             st.metric(
-                "Profit / Loss",
+                "Cash Profit / Loss",
                 money(profit_loss)
             )
+            if bonus_credit_value:
+                st.caption(f"Bonus credit separately recorded: {money(bonus_credit_value)}")
 
         if manual_override:
             st.info(
@@ -716,7 +781,8 @@ def results_tab():
             )
 
         if scratched:
-            st.info("Fully voided bet: total stake refunded.")
+            st.info("Fully voided: cash-funded portion refunded. Any bonus stake "
+                    "reissued by the bookmaker must be recorded separately; do not treat it as cash.")
 
         can_settle = official['state'] not in ('ambiguous', 'invalid')
 
@@ -732,10 +798,16 @@ def results_tab():
             st.warning("Select the bookmaker's paying-place terms.")
             can_settle = False
 
-        if scratched and abs(payout - total_stake) > 0.009:
-            st.error(
-                "A fully voided bet must refund the full stake."
-            )
+        if scratched and abs(payout - cash_outlay) > 0.009:
+            st.error("A fully voided bet must refund the cash-funded stake; "
+                     "bonus-funded stakes are not cash.")
+            can_settle = False
+        if bonus_credit_value > 0 and not credit_verified:
+            st.error("Confirm the bookmaker bonus credit before recording it.")
+            can_settle = False
+        if promo_mode == v058_promotions.REFUND and bonus_credit_value > cash_outlay:
+            st.error("Bonus credit cannot exceed the original cash-funded stake "
+                     "without a separately documented offer. Enter 0 and correct later if needed.")
             can_settle = False
 
         submitted = st.button(
@@ -751,6 +823,7 @@ def results_tab():
 
             change = {
                 "status": status,
+                "bonus_credit_value": round(bonus_credit_value, 2),
                 "total_return": round(payout, 2),
                 "settled_at": now,
                 "updated_at": now
@@ -815,6 +888,12 @@ def results_tab():
             with st.form('correct_settlement'):
                 new_status = st.selectbox('Correct status', ['Settled', 'Void'], index=0 if old['status'] == 'Settled' else 1)
                 new_return = st.number_input('Correct total return ($)', min_value=0.0, value=float(old['total_return'] or 0), step=0.5)
+                if (old.get("promo_mode") or v058_promotions.NONE) == v058_promotions.REFUND:
+                    new_bonus_credit = st.number_input(
+                        "Correct verified bonus credit ($ — not cash)",
+                        min_value=0.0, value=float(old.get("bonus_credit_value") or 0), step=0.5)
+                else:
+                    new_bonus_credit = float(old.get("bonus_credit_value") or 0)
                 reason = st.text_input('Reason for correction (required)')
                 save = st.form_submit_button('Save correction')
             if save:
@@ -822,6 +901,7 @@ def results_tab():
                     st.error('Enter a reason for the correction.')
                 else:
                     changes = {'status': new_status, 'total_return': round(new_return, 2),
+                               'bonus_credit_value': round(new_bonus_credit, 2),
                                'updated_at': datetime.now(timezone.utc).isoformat()}
                     try:
                         db().table('bets').update(changes).eq('id', old['id']).execute()
@@ -844,24 +924,31 @@ def performance_tab():
         return
     settled = [b for b in bets if b['status'] == 'Settled']
     pending = [b for b in bets if b['status'] == 'Pending']
-    stake = sum(float(b['total_stake']) for b in settled)
+    stake = sum(v058_promotions.cash_stake(b) for b in settled)
     returns = sum(float(b['total_return'] or 0) for b in settled)
     profit = returns - stake
     c = st.columns(5)
     for col, label, value in zip(c, ['Settled Bets', 'Staked', 'Returned', 'Net P/L', 'ROI'],
                                  [str(len(settled)), money(stake), money(returns), money(profit), f'{profit/stake*100:.2f}%' if stake else 'N/A']):
         col.metric(label, value)
-    st.caption(f'{len(pending)} pending bets excluded from settled ROI. Void bets excluded from staked amount and ROI.')
+    promo_totals = v058_promotions.cash_stake_metrics(bets)
+    pc1, pc2 = st.columns(2)
+    pc1.metric("Bonus stakes used (not cash)", money(promo_totals["bonus_staked"]))
+    pc2.metric("Confirmed bonus credits (not cash)", money(promo_totals["bonus_credits_confirmed"]))
+    st.caption(f'{len(pending)} pending bets excluded from settled ROI. Void bets excluded. '
+               'Staked = actual cash outlay; bonus stakes and bonus credits shown separately. '
+               'The existing Supabase profit_loss column may still reflect gross stake; cash-P/L is recalculated here.')
     if settled:
-        wins = sum(float(b['total_return'] or 0) > float(b['total_stake']) for b in settled)
+        wins = sum(float(b['total_return'] or 0) > v058_promotions.cash_stake(b) for b in settled)
         st.metric('Profitable bet rate', f'{wins/len(settled)*100:.1f}%')
         st.caption('Profitable bet rate is not the same as horse win/place strike rate; each-way and partial returns can differ.')
         frame = pd.DataFrame(settled)
-        frame['P/L'] = frame['profit_loss'].astype(float)
+        frame['Cash stake'] = [v058_promotions.cash_stake(b) for b in settled]
+        frame['P/L'] = [v058_promotions.cash_profit(b) for b in settled]
         frame['Cumulative P/L'] = frame['P/L'].cumsum()
         st.line_chart(frame.set_index('placed_at')['Cumulative P/L'])
         st.subheader('By bet type')
-        group = frame.groupby('bet_type', as_index=False).agg(Bets=('id', 'count'), Stake=('total_stake', lambda x: sum(map(float, x))), Returns=('total_return', lambda x: sum(map(float, x))))
+        group = frame.groupby('bet_type', as_index=False).agg(Bets=('id', 'count'), Stake=('Cash stake', lambda x: sum(map(float, x))), Returns=('total_return', lambda x: sum(map(float, x))))
         group['P/L'] = group['Returns'] - group['Stake']
         group['ROI %'] = group.apply(lambda x: 100*x['P/L']/x['Stake'] if x['Stake'] else 0, axis=1)
         st.dataframe(group, hide_index=True, use_container_width=True)
@@ -870,7 +957,7 @@ def performance_tab():
         st.subheader('By saved model rank')
         ranked = frame.dropna(subset=['Model Rank'])
         if not ranked.empty:
-            ranks = ranked.groupby('Model Rank', as_index=False).agg(Bets=('id', 'count'), Stake=('total_stake', lambda x: sum(map(float, x))), Returns=('total_return', lambda x: sum(map(float, x))))
+            ranks = ranked.groupby('Model Rank', as_index=False).agg(Bets=('id', 'count'), Stake=('Cash stake', lambda x: sum(map(float, x))), Returns=('total_return', lambda x: sum(map(float, x))))
             ranks['P/L'] = ranks['Returns'] - ranks['Stake']
             ranks['ROI %'] = ranks.apply(lambda x: 100*x['P/L']/x['Stake'] if x['Stake'] else 0, axis=1)
             st.dataframe(ranks, hide_index=True, use_container_width=True)
@@ -1525,6 +1612,8 @@ with t4:
     performance_tab()
 with t5:
     v043_full_field.render(db_rows)
+    st.divider()
+    v058_field_size.render(db_rows)
     st.divider()
     v057c_corrected_benchmark.render(db_rows)
     st.divider()
