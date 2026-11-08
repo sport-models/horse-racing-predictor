@@ -1,5 +1,6 @@
 import v057g_each_way_benchmark
 # v0.5.8 PROMO & FIELD SIZE INSTALLED
+import v059_score_separation
 import v058_field_size
 import v058_promotions
 import v057f_repaired_benchmark
@@ -1612,6 +1613,8 @@ with t4:
     performance_tab()
 with t5:
     v043_full_field.render(db_rows)
+    st.divider()
+    v059_score_separation.render(db_rows)
     st.divider()
     v058_field_size.render(db_rows)
     st.divider()

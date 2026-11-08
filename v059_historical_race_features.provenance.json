@@ -1,0 +1,18 @@
+{
+  "version": "v0.5.9",
+  "source_runners_filename": "runner_validation (1).csv",
+  "source_runners_sha256": "f4a6a0bfd61cdcb270409a83697a45733353ada81279a6385f1373b3b028252c",
+  "source_integrity_filename": "race_integrity.csv",
+  "source_integrity_sha256": "26d5620086af1393d1fb366c4df021c63ae10d06c6543af5530ccdb8cc4dcb45",
+  "output_filename": "v059_historical_race_features.csv",
+  "output_sha256": "e5b047d93f9ff5b18b24bca1c09e55822157854a1bb007884aa1a48eb0f99be5",
+  "qualified_races": 1040,
+  "excluded_races": 0,
+  "historical_point_in_time_verified": false,
+  "split_counts": {
+    "development": 697,
+    "comparison_only_exposed": 237,
+    "validation": 106
+  },
+  "research_only": true
+}
