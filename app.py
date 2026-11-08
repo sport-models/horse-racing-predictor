@@ -1,5 +1,6 @@
 import v057g_each_way_benchmark
 # v0.5.8 PROMO & FIELD SIZE INSTALLED
+import v061b_historical
 import v061_prospective
 import v060_validation_hub
 import v059_score_separation
@@ -1652,6 +1653,8 @@ with t5:
     v043_full_field.render(db_rows)
     st.divider()
     v061_prospective.render(secret)
+    st.divider()
+    v061b_historical.render(secret, score_runner)
     st.divider()
     v060_validation_hub.render(db_rows)
     st.divider()
