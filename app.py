@@ -1,3 +1,4 @@
+import v057b_coverage_diagnostics
 import v057a_market_benchmark
 import v045_result_lookup
 import v044_bulk_results
@@ -1526,6 +1527,8 @@ with t5:
     v043_full_field.render(db_rows)
     st.divider()
     v057a_market_benchmark.render(db_rows)
+    st.divider()
+    v057b_coverage_diagnostics.render(db_rows)
 with t6:
     puntersedge_tab()
     st.divider()
