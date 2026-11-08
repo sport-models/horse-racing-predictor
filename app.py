@@ -1,3 +1,4 @@
+import v057g_each_way_benchmark
 import v057f_repaired_benchmark
 from v057f_odds_integrity import make_snapshot_quote
 import v057e_strategy_benchmark
@@ -1530,6 +1531,8 @@ with t5:
     v057e_strategy_benchmark.render(db_rows)
     st.divider()
     v057f_repaired_benchmark.render(db_rows)
+    st.divider()
+    v057g_each_way_benchmark.render(db_rows)
     st.divider()
     v057a_market_benchmark.render(db_rows)
     st.divider()
