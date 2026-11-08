@@ -1,5 +1,6 @@
 import v057g_each_way_benchmark
 # v0.5.8 PROMO & FIELD SIZE INSTALLED
+import v061_prospective
 import v060_validation_hub
 import v059_score_separation
 import v058_field_size
@@ -1167,18 +1168,53 @@ def analysis_tab():
         st.warning('Historical API statistics may include post-race information. Do not treat these rankings as verified pre-race predictions.')
     if selected_date >= date.today():
         if st.button('🔒 Save & Lock All Race Predictions', type='primary'):
+            # v0.6.1: a fresh, uncached form snapshot generates the ACTUAL locked
+            # rankings; cached display rankings are NEVER archived as new evidence.
             try:
-                batch = snapshot_race(
-                    analysis['date'],
-                    analysis['track'],
-                    analysis['race_number'],
-                    df,
-                    analysis.get('bookmaker_quotes', {}),
-                    analysis.get('odds_snapshot_at')
-                )
-                st.success(f'✅ {len(df)} predictions permanently saved to Supabase (batch {batch[:8]}). Open Bet Tracker to enter odds and stakes.')
-            except Exception as e:
-                st.error(f'Predictions were NOT confirmed saved: {e}')
+                v061_prospective.ensure_new_race(
+                    v061_prospective.archive_client(secret),
+                    analysis['date'], analysis['track'], analysis['race_number'])
+                prepared = v061_prospective.prepare_live_snapshot(
+                    race_date=analysis['date'], track=analysis['track'],
+                    track_slug=track_slug, race_number=analysis['race_number'],
+                    formfav_key=api_key, puntersedge_key=secret('PUNTERSEDGE_API_KEY'),
+                    get_items=get_items, get_value=get_value,
+                    meeting_name=meeting_name, score_runner=score_runner,
+                    recent_form_score=recent_form_score, win_rate=win_rate,
+                    as_number=as_number, odds_find_race=odds_find_race,
+                    odds_runner_quotes=odds_runner_quotes,
+                    puntersedge_request=puntersedge_request)
+            except Exception as evidence_error:
+                st.error('New prospective lock BLOCKED: live evidence refresh failed: '
+                         + str(evidence_error) + '. No predictions were saved.')
+            else:
+                try:
+                    batch = snapshot_race(
+                        analysis['date'], analysis['track'], analysis['race_number'],
+                        prepared['rankings_df'], prepared['bookmaker_quotes'],
+                        prepared['odds_snapshot_at'])
+                except Exception as save_error:
+                    st.error('Neither a new confirmed legacy prediction nor a v0.6.1 archive '
+                             'is available; check Supabase before retrying: ' + str(save_error))
+                else:
+                    # Save the immutable evidence separately, and DO NOT pretend
+                    # that two Supabase writes form a single database transaction.
+                    try:
+                        receipt = v061_prospective.archive_locked_batch(
+                            v061_prospective.archive_client(secret), batch, prepared)
+                    except Exception as archive_error:
+                        st.error(f'IMPORTANT: legacy predictions batch {batch[:8]} WAS saved, '
+                                 'but v0.6.1 independent evidence was NOT archived: '
+                                 + str(archive_error) + '. This batch is UNVERIFIED. '
+                                 'Check the migration and service-role credentials. '
+                                 'Do not backfill this as a verified pre-race snapshot.')
+                    else:
+                        analysis['df'] = prepared['rankings_df']
+                        analysis['race_data'] = prepared['payload']['form_response_raw']
+                        st.success(f'✅ {len(prepared["rankings_df"])} freshly ranked runners saved '
+                                   f'and archived in immutable v0.6.1 evidence (batch {batch[:8]}). '
+                                   'Pre-scheduled only: official actual-off and source-as-of '
+                                   'verification remain outstanding.')
     else:
         st.info('Saving historical rankings as pre-race predictions is disabled to prevent post-race data leakage.')
     with st.expander('🔍 Raw Race Data'):
@@ -1614,6 +1650,8 @@ with t4:
     performance_tab()
 with t5:
     v043_full_field.render(db_rows)
+    st.divider()
+    v061_prospective.render(secret)
     st.divider()
     v060_validation_hub.render(db_rows)
     st.divider()
