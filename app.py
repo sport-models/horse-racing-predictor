@@ -1,3 +1,4 @@
+import v057c_corrected_benchmark
 import v057b_coverage_diagnostics
 import v057a_market_benchmark
 import v045_result_lookup
@@ -1525,6 +1526,8 @@ with t4:
     performance_tab()
 with t5:
     v043_full_field.render(db_rows)
+    st.divider()
+    v057c_corrected_benchmark.render(db_rows)
     st.divider()
     v057a_market_benchmark.render(db_rows)
     st.divider()
