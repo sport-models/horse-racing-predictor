@@ -1,3 +1,5 @@
+import v057f_repaired_benchmark
+from v057f_odds_integrity import make_snapshot_quote
 import v057e_strategy_benchmark
 import v057c_corrected_benchmark
 import v057b_coverage_diagnostics
@@ -1045,7 +1047,9 @@ def analysis_tab():
                     "Win": quote["win"],
                     "Place": quote["place"],
                     "Stale": quote["stale"],
-                    "Last Updated": quote["last_update"]
+                    "Last Updated": quote["last_update"],
+                    "Book Places Paid": quote.get("places_paid"),
+                    "Race Places Reference (not book terms)": quote.get("race_places_paid_reference")
                 })
 
         if comparison:
@@ -1217,14 +1221,7 @@ def odds_runner_quotes(event, horse):
         if not isinstance(book, dict):
             continue
 
-        quotes.append({
-            "bookmaker": str(book.get("key", "")).lower(),
-            "win": odds_price(book.get("win_price")),
-            "place": odds_price(book.get("place_price")),
-            "stale": book.get("stale") is not False,
-            "last_update": book.get("last_update"),
-            "source_url": book.get("source_url"),
-        })
+        quotes.append(make_snapshot_quote(book, event))
 
     return quotes
 
@@ -1531,6 +1528,8 @@ with t5:
     v057c_corrected_benchmark.render(db_rows)
     st.divider()
     v057e_strategy_benchmark.render(db_rows)
+    st.divider()
+    v057f_repaired_benchmark.render(db_rows)
     st.divider()
     v057a_market_benchmark.render(db_rows)
     st.divider()
