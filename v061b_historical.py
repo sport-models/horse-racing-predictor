@@ -611,8 +611,71 @@ def render(secret, score_runner):
         except Exception as exc:
             st.error('Results table unavailable: '+str(exc));imported=[]
         done={str(r['batch_id']) for r in imported}
-        pending=[r for r in existing if str(r['id']) not in done]
+        # Exclusions are deliberately separate from immutable historical captures/results.
+        # A failed API response is NOT evidence of abandonment: the operator chooses a reason.
+        try:
+            exclusions=read_all(client,'v061b_result_exclusions','batch_id,reason,note,marked_at')
+            exclusion_store_ready=True
+        except Exception as exc:
+            exclusions=[]
+            exclusion_store_ready=False
+            st.warning('Result-exclusion table not available. Run migrate_v061c_result_exclusions.sql in Supabase SQL Editor. '+str(exc))
+        excluded_ids={str(x['batch_id']) for x in exclusions}
+        pending=[r for r in existing if str(r['id']) not in done and str(r['id']) not in excluded_ids]
         st.metric('Archived races awaiting official results',len(pending))
+        st.caption(f'Excluded/unresolved races: {len(exclusions)} (separate from successfully imported results).')
+        if exclusion_store_ready:
+            with st.expander('Manage abandoned / unavailable results (reversible)', expanded=False):
+                if pending:
+                    exclude_options={str(r['id']):r for r in pending}
+                    exclude_ids=st.multiselect(
+                        'Select races to exclude from pending results',list(exclude_options),
+                        format_func=lambda k: f"{exclude_options[k]['race_date']} {exclude_options[k]['track']} R{exclude_options[k]['race_number']}",
+                        key='v061c_exclude_ids')
+                    exclude_reason=st.selectbox('Exclusion reason',[
+                        'RESULT_UNAVAILABLE','CONFIRMED_ABANDONED','OTHER_UNRESOLVED'],
+                        format_func=lambda x: {
+                            'RESULT_UNAVAILABLE':'Official results unavailable / API error (not confirmed abandoned)',
+                            'CONFIRMED_ABANDONED':'Confirmed abandoned (verified externally)',
+                            'OTHER_UNRESOLVED':'Other unresolved issue'
+                        }[x],key='v061c_exclude_reason')
+                    exclude_note=st.text_input('Optional evidence / notes',key='v061c_exclude_note')
+                    exclude_confirm=st.checkbox('Exclude selected races from pending results; preserve archived data',
+                                                key='v061c_exclude_confirm')
+                    if st.button('Exclude selected races',disabled=not(exclude_ids and exclude_confirm),
+                                 key='v061c_exclude_button'):
+                        saved=0
+                        for bid in exclude_ids:
+                            try:
+                                client.table('v061b_result_exclusions').insert({
+                                    'batch_id':bid,'reason':exclude_reason,'note':exclude_note
+                                }).execute()
+                                saved+=1
+                            except Exception as exc:
+                                st.error(f'Unable to exclude {bid}: {exc}')
+                        st.success(f'Excluded {saved} races. Original archived data retained.')
+                        if saved:
+                            st.session_state.pop('v061b_result_previews',None)
+                            st.rerun()
+                if exclusions:
+                    excluded_options={str(r['batch_id']):r for r in exclusions}
+                    restore_ids=st.multiselect(
+                        'Restore previously excluded races to pending results',list(excluded_options),
+                        format_func=lambda k: f"{k} — {excluded_options[k]['reason']}",
+                        key='v061c_restore_ids')
+                    if st.button('Restore selected races',disabled=not bool(restore_ids),key='v061c_restore_button'):
+                        restored=0
+                        for bid in restore_ids:
+                            try:
+                                client.table('v061b_result_exclusions').delete().eq('batch_id',bid).execute()
+                                restored+=1
+                            except Exception as exc:
+                                st.error(f'Unable to restore {bid}: {exc}')
+                        st.success(f'Restored {restored} races to pending results.')
+                        if restored:
+                            st.rerun()
+                if exclusions:
+                    st.dataframe(pd.DataFrame(exclusions),hide_index=True,use_container_width=True)
         if pending:
             pending.sort(key=lambda x:(x['race_date'],x['track'],x['race_number']))
             options={str(p['id']):p for p in pending}
