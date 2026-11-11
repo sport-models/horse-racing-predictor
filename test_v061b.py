@@ -152,7 +152,9 @@ class V061bTests(unittest.TestCase):
         copy=json.loads(json.dumps(RESULTS));copy['resultStatus']='pending'
         with self.assertRaises(ValueError):m.parse_final_results(copy,RACE)
         copy=json.loads(json.dumps(RESULTS));copy['placings'][1]['position']=1
-        with self.assertRaises(ValueError):m.parse_final_results(copy,RACE)
+        parsed=m.parse_final_results(copy,RACE)
+        self.assertEqual(parsed['winners'],2)
+        self.assertTrue(parsed['dead_heat_first'])
         copy=json.loads(json.dumps(RESULTS));copy['numberOfRunners']=5
         with self.assertRaises(ValueError):m.parse_final_results(copy,RACE)
         copy=json.loads(json.dumps(RESULTS));copy['date']='2026-11-06'

@@ -339,9 +339,12 @@ def parse_final_results(payload, race):
         if not scratched:
             starters += 1
             wins += (p == 1)
-    if wins != 1:
-        raise ValueError(f'Expected exactly one winner, found {wins}')
-    return {'starters':starters,'declared':len(placings),'scratches':len(placings)-starters}
+    # V061D_DEAD_HEAT_MULTIPLE_WINNERS: one or several joint firsts are valid.
+    if wins < 1:
+        raise ValueError('Final official results contain no first-place winner')
+    return {'starters':starters,'declared':len(placings),
+            'scratches':len(placings)-starters,
+            'winners':wins,'dead_heat_first':wins>1}
 
 
 def fetch_results_preview(race, api_key, requester=None):
@@ -381,7 +384,9 @@ def build_reports(batches, feature_rows, results):
                  'ranked_count':sum(x.get('model_rank') is not None for x in feat),
                  'unscored_ranked_count':sum(x.get('model_rank') is not None and x.get('model_score') is None for x in feat),
                  'actual_starters':None,'top1_won':None,'winner_in_top3':None,
-                 'winner_rank':None,'model_selection':None,'model_selection_sp':None,
+                 'winner_rank':None,'winner_ranks':None,'winner_count':None,
+                 'winning_horses':None,'dead_heat_first':None,
+                 'model_selection':None,'model_selection_sp':None,
                  'model_win_sp_profit_10':None,'market_sp_favourite':None,
                  'market_sp_favourite_won':None,'random_top1_expectation':None,
                  'random_top3_expectation':None,'original_top1_scratched':None,
@@ -410,12 +415,24 @@ def build_reports(batches, feature_rows, results):
             outcome['status']='INVALID_RESULT';races.append(outcome);continue
         starters={canonical(p['name']):p for p in payload['placings'] if p.get('scratched') is not True}
         scratched={canonical(p['name']) for p in payload['placings'] if p.get('scratched') is True}
-        winner=next(k for k,v in starters.items() if integer(v.get('position'))==1)
+        winners={k for k,v in starters.items() if integer(v.get('position'))==1}
+        winner_count=len(winners)
+        outcome['winner_count']=winner_count
+        outcome['dead_heat_first']=winner_count>1
+        outcome['winning_horses']=' | '.join(sorted(
+            p['name'] for p in payload['placings']
+            if p.get('scratched') is not True and integer(p.get('position'))==1))
         prediction_keys={f['horse_key'] for f in feat if f.get('model_rank') is not None}
         missing=sorted(set(starters)-prediction_keys)
         outcome['actual_starters']=len(starters)
-        outcome['random_top1_expectation']=1/len(starters)
-        outcome['random_top3_expectation']=min(3,len(starters))/len(starters)
+        # Probability that a uniformly chosen runner (or top-3 set) includes
+        # at least one of the W first-place finishers; valid for dead-heats.
+        n=len(starters)
+        m=min(3,n)
+        outcome['random_top1_expectation']=winner_count/n
+        outcome['random_top3_expectation']=(
+            1 - math.comb(n-winner_count,m)/math.comb(n,m)
+            if n-winner_count >= m else 1.0)
         outcome['missing_actual_starters']=len(missing)
         if outcome['status']=='INVALID_CAPTURE' or missing:
             outcome['status']='INCOMPLETE_PREDICTIONS'
@@ -426,8 +443,10 @@ def build_reports(batches, feature_rows, results):
         original_top=ranked[0]
         outcome['original_top1_scratched']=original_top['horse_key'] in scratched
         outcome['model_selection']=original_top['horse']
-        outcome['winner_rank']=rank_map.get(winner)
-        outcome['winner_in_top3']=rank_map.get(winner) is not None and rank_map[winner] <= 3
+        win_ranks=sorted(rank_map[k] for k in winners if k in rank_map)
+        outcome['winner_rank']=win_ranks[0] if win_ranks else None  # best winner rank
+        outcome['winner_ranks']=','.join(str(rank) for rank in win_ranks)
+        outcome['winner_in_top3']=any(rank<=3 for rank in win_ranks)
         if original_top.get('model_score') is None:
             outcome['status']='UNSCORED_TOP1'
             issues.append({'batch_id':bid,'reason':'UNSCORED_TOP1_EXCLUDE_FROM_WIN_RATE'})
@@ -435,11 +454,15 @@ def build_reports(batches, feature_rows, results):
             outcome['status']='ORIGINAL_TOP1_SCRATCHED'
             issues.append({'batch_id':bid,'reason':'ORIGINAL_TOP1_SCRATCHED_DO_NOT_SUBSTITUTE'})
         else:
-            outcome['top1_won']=original_top['horse_key']==winner
+            outcome['top1_won']=original_top['horse_key'] in winners
             sp=numeric(starters.get(original_top['horse_key'],{}).get('startingPrice'))
             if sp is not None and sp>1:
                 outcome['model_selection_sp']=sp
-                outcome['model_win_sp_profit_10']=10*(sp if outcome['top1_won'] else 0)-10
+                # Retrospective SP proxy, not a real settled bet. For a dead
+                # heat, divide the winning return by co-winners (pro-rata
+                # face value). The original $10 is the cost in all cases.
+                gross=10*sp/winner_count if outcome['top1_won'] else 0
+                outcome['model_win_sp_profit_10']=gross-10
             outcome['status']='EVALUABLE_RETROSPECTIVE_RESEARCH'
         sp_candidates=[]
         for h, item in starters.items():
@@ -451,7 +474,7 @@ def build_reports(batches, feature_rows, results):
             ties=[h for p,h in sp_candidates if p==best]
             if len(ties)==1:
                 outcome['market_sp_favourite']=next((f['horse'] for f in feat if f['horse_key']==ties[0]),ties[0])
-                outcome['market_sp_favourite_won']=ties[0]==winner
+                outcome['market_sp_favourite_won']=ties[0] in winners
             else:
                 issues.append({'batch_id':bid,'reason':'TIED_STARTING_PRICE_FAVOURITE'})
         for f in feat:
@@ -482,12 +505,15 @@ def build_reports(batches, feature_rows, results):
     summary=pd.DataFrame([{
         'version':VERSION,'archived_races':len(df),'runners_saved':len(feature_rows),
         'official_results_imported':len(results),'evaluable_research_races':len(evaluate),
+        'first_place_dead_heats_imported':int(df['dead_heat_first'].fillna(False).sum()) if not df.empty else 0,
+        'first_place_dead_heats_evaluable':int(evaluate['dead_heat_first'].fillna(False).sum()) if not evaluate.empty else 0,
         'top1_wins':win_n,'top1_rate':win_n/len(evaluate) if len(evaluate) else None,
         'winner_in_top3':top3_n,'top3_rate':top3_n/len(evaluate) if len(evaluate) else None,
         'random_top1_expected_wins':evaluate['random_top1_expectation'].sum() if not evaluate.empty else None,
         'random_top3_expected_hits':evaluate['random_top3_expectation'].sum() if not evaluate.empty else None,
         'sp_research_races':len(sp),'sp_research_net_profit_10':sp['model_win_sp_profit_10'].sum() if len(sp) else None,
         'sp_research_roi':sp['model_win_sp_profit_10'].sum()/(10*len(sp)) if len(sp) else None,
+        'sp_return_basis':'RETROSPECTIVE_SP_PROXY_PRO_RATA_DEAD_HEAT_NOT_SETTLED_BETS',
         'pre_race_certified_count':0,
         'promotion_status':'CLOSED_HISTORICAL_AFTER_RACE_RETRIEVAL',
     }])
@@ -705,7 +731,9 @@ def render(secret, score_runner):
             if previews:
                 st.dataframe(pd.DataFrame([{'date':p['race']['race_date'],'track':p['race']['track'],
                                             'race':p['race']['race_number'],'declared':p['declared'],
-                                            'starters':p['starters'],'scratches':p['scratches']}
+                                            'starters':p['starters'],'scratches':p['scratches'],
+                                            'first_place_winners':p['winners'],
+                                            'dead_heat_first':p['dead_heat_first']}
                                            for p in previews]),hide_index=True,use_container_width=True)
                 st.warning('Review the full official field for each race. No results are saved until explicit confirmation.')
                 for p in previews:
