@@ -783,6 +783,10 @@ def render(secret, score_runner):
             st.dataframe(reports['summary'],hide_index=True,use_container_width=True)
             if not reports['races'].empty:
                 st.dataframe(reports['races'].tail(50),hide_index=True,use_container_width=True)
+            # V061F_TRACK_PERFORMANCE_DASHBOARD
+            import v061f_track_dashboard
+            st.divider()
+            v061f_track_dashboard.render(reports)
             for name,df in [*reports.items(),('structured_features',st.session_state['v061b_feature_export'])]:
                 st.download_button('Download '+name+' CSV',df.to_csv(index=False).encode('utf-8'),
                                    file_name='v061b_'+name+'.csv',mime='text/csv',key='v061b_export_'+name)
