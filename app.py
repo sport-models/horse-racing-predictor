@@ -34,7 +34,8 @@ from supabase import create_client
 st.set_page_config(page_title='Horse Racing Predictor', page_icon='🏇', layout='wide')
 BASE_URL = 'https://api.formfav.com'
 MODEL_VERSION = 'v0.2'
-TARGET_TRACKS = {'flemington', 'caulfield', 'moonee valley', 'mooneevalley'}
+TARGET_TRACKS = {'flemington', 'caulfield', 'moonee valley', 'mooneevalley',
+                 'geelong', 'sandown', 'ballarat', 'seymour', 'seymore', 'pakenham'}
 
 
 def secret(name):
@@ -1002,7 +1003,7 @@ def analysis_tab():
     filtered = [m for m in meetings if isinstance(m, dict) and meeting_country(m) in ('au','aus','australia')
                 and any(norm_track(meeting_name(m)) == t or norm_track(meeting_name(m)).startswith(t + ' ') for t in TARGET_TRACKS)]
     if not filtered:
-        st.warning('No Flemington, Caulfield or Moonee Valley meeting returned for this date. Your saved bets and results remain accessible in the other tabs.')
+        st.warning('No selected Victorian racecourses returned for this date. Check API Meeting Diagnostics for venues returned by FormFav. Your saved bets and results remain accessible in the other tabs.')
         return
     meeting = st.selectbox('Select Racecourse', filtered, format_func=meeting_name)
     races = get_items(meeting, 'races')
