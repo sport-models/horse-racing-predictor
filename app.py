@@ -1,5 +1,7 @@
 import v061i_analysis
 import v061j_integrity
+import v061k_integrity
+import v061k_stage2
 import v061h_readiness
 import v061h_strategy
 import v057g_each_way_benchmark
@@ -1668,6 +1670,10 @@ with t5:
     v061i_analysis.render(secret)
     st.divider()
     v061j_integrity.render(secret)
+    st.divider()
+    v061k_integrity.render(secret)
+    st.divider()
+    v061k_stage2.render(secret)
     st.divider()
     v060_validation_hub.render(db_rows)
     st.divider()
