@@ -28,7 +28,10 @@ class Tests(unittest.TestCase):
         with self.assertRaises(ValueError):m.calculate(p)
     def test_invalid_score(self):
         p=sample();p['rankings'][0]['score']=None
-        with self.assertRaises(ValueError):m.calculate(p)
+        result=m.calculate(p)
+        self.assertEqual(result['status'],'PREREGISTERED_CONFIDENCE_UNAVAILABLE_UNSCORED')
+        self.assertEqual(result['probabilities'],{})
+        self.assertEqual(result['unscored_count'],1)
     def test_negative_gap(self):
         p=sample();p['rankings'][1]['score']=70
         with self.assertRaises(ValueError):m.calculate(p)

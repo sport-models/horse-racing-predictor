@@ -52,41 +52,57 @@ def calculate(payload, timestamp=None):
     ranks = payload.get('rankings')
     if not isinstance(ranks, list) or len(ranks) < 2:
         raise ValueError('Require at least two complete locked runners')
-    ids, scores = [], []
+    ids, scores, unscored = [], {}, []
     for item in ranks:
         try:
-            ids.append(int(item['rank']))
-            val = float(item['score'])
+            rank = int(item['rank'])
+            horse = str(item['horse'])
         except (ValueError, TypeError, KeyError):
-            raise ValueError('Invalid rank or missing score; shadow not recorded')
-        if not math.isfinite(val):
-            raise ValueError('Non-finite ranking score')
-        scores.append(val)
+            raise ValueError('Invalid locked runner identity or rank')
+        if not horse.strip():
+            raise ValueError('Empty locked horse name')
+        ids.append(rank)
+        raw = item.get('score')
+        if raw is None:
+            unscored.append({'rank': rank, 'horse': horse})
+        else:
+            try:
+                val = float(raw)
+            except (ValueError, TypeError, OverflowError):
+                raise ValueError('Invalid non-numeric locked score')
+            if not math.isfinite(val):
+                raise ValueError('Non-finite ranking score')
+            scores[rank] = val
     if sorted(ids) != list(range(1, len(ranks) + 1)):
         raise ValueError('Incomplete or duplicate ranks')
-    lookup = dict(zip(ids, scores))
-    gap = lookup[1] - lookup[2]
-    if gap < -1e-8:
-        raise ValueError('Locked rankings and score order conflict')
     now = utc_time(timestamp or datetime.now(timezone.utc).isoformat())
     schedule = utc_time(payload['scheduled_start_utc'])
     generated = utc_time(payload['source_times']['ranking_generated_utc'])
     if not generated <= now < schedule:
         raise ValueError('Shadow calculation must follow ranking and precede scheduled start')
     field = len(ranks)
-    lf = math.log(field / 10)
-    gu = min(20, max(-20, gap / 10))
-    vectors = {
-        'FIELD_BASELINE': [1, lf],
-        'GAP_ONLY_CHALLENGER': [1, lf, gu],
-        'FIELD_GAP_INTERACTION_CHALLENGER': [1, lf, gu, lf * gu],
-    }
-    probabilities = {
-        name: logistic(sum(c * v for c, v in zip(cfg['models'][name]['coefficients'], vector)))
-        for name, vector in vectors.items()
-    }
+    gap = scores[1] - scores[2] if 1 in scores and 2 in scores else None
+    if gap is not None and gap < -1e-8:
+        raise ValueError('Locked rankings and score order conflict')
+    # Preserve all v0.2 runners. The historical confidence model was calibrated
+    # on fully scored fields; skip probabilities instead of guessing missing form.
+    status = ('PREREGISTERED_CONFIDENCE_UNAVAILABLE_UNSCORED'
+              if unscored else 'PREREGISTERED_RESEARCH_ONLY_UNCERTIFIED')
+    probabilities = {}
+    if not unscored:
+        lf = math.log(field / 10)
+        gu = min(20, max(-20, gap / 10))
+        vectors = {
+            'FIELD_BASELINE': [1, lf],
+            'GAP_ONLY_CHALLENGER': [1, lf, gu],
+            'FIELD_GAP_INTERACTION_CHALLENGER': [1, lf, gu, lf * gu],
+        }
+        probabilities = {
+            name: logistic(sum(c * v for c, v in zip(cfg['models'][name]['coefficients'], vector)))
+            for name, vector in vectors.items()
+        }
     return {
-        'version': VERSION, 'status': 'PREREGISTERED_RESEARCH_ONLY_UNCERTIFIED',
+        'version': VERSION, 'status': status,
         'source': 'At-lock frozen v0.2 ranking scores, no result data',
         'registered_at_utc': now.isoformat(),
         'research_config_sha256': EXPECTED_CONFIG_HASH,
@@ -94,8 +110,9 @@ def calculate(payload, timestamp=None):
         'research_training_end': cfg['training_end'],
         'research_holdout_end': cfg['holdout_end'],
         'production_model': 'v0.2', 'field_size': field,
-        'rank1_score': lookup[1], 'rank2_score': lookup[2], 'rank1_rank2_gap': gap,
-        'probabilities': probabilities,
+        'rank1_score': scores.get(1), 'rank2_score': scores.get(2),
+        'rank1_rank2_gap': gap, 'unscored_count': len(unscored),
+        'unscored_runners': unscored, 'probabilities': probabilities,
         'actual_off_verified': False, 'source_asof_verified': False,
         'promotion_approved': False,
     }
@@ -105,8 +122,8 @@ def attach_shadow(payload):
     """Called INSIDE archive_locked_batch before archive payload hash and INSERT.
 
     Postgres archived payload is a single immutable record containing both the
-    v0.2 ranks and shadow probabilities. A failed calculation blocks archive;
-    caller must mark already-written legacy batch unverified, as before.
+    v0.2 ranks and shadow probabilities. Unscored runners retain their null scores and are not assigned
+    synthetic confidence values.
     """
     updated = dict(payload)
     updated['confidence_shadow_v061m'] = calculate(updated)
@@ -129,7 +146,9 @@ def audit_archives(archives):
                 issues.append('CONFIG_HASH_MISMATCH')
             if shadow.get('production_model') != 'v0.2':
                 issues.append('PRODUCTION_MODEL_MISMATCH')
-            if shadow.get('status') != 'PREREGISTERED_RESEARCH_ONLY_UNCERTIFIED':
+            shadow_status = shadow.get('status')
+            if shadow_status not in ('PREREGISTERED_RESEARCH_ONLY_UNCERTIFIED',
+                                     'PREREGISTERED_CONFIDENCE_UNAVAILABLE_UNSCORED'):
                 issues.append('INVALID_STATUS')
             t = utc_time(shadow['registered_at_utc'])
             scheduled = utc_time(a['scheduled_start_utc'])
@@ -139,10 +158,22 @@ def audit_archives(archives):
                 issues.append('TIME_OR_ARCHIVE_ORDER_INVALID')
             if shadow['field_size'] != len(p['rankings']):
                 issues.append('FIELD_MISMATCH')
-            if shadow['rank1_rank2_gap'] < 0:
-                issues.append('NEGATIVE_GAP')
-            if any(not (0 < float(v) < 1) for v in shadow['probabilities'].values()):
-                issues.append('INVALID_PROBABILITY')
+            if shadow_status == 'PREREGISTERED_CONFIDENCE_UNAVAILABLE_UNSCORED':
+                missing = [r for r in p['rankings'] if r.get('score') is None]
+                if (not missing or shadow.get('unscored_count') != len(missing)
+                        or shadow.get('probabilities') != {}):
+                    issues.append('INVALID_UNSCORED_SHADOW')
+            else:
+                if any(r.get('score') is None for r in p['rankings']):
+                    issues.append('UNSCORED_RUNNER_HAS_PROBABILITY')
+                if shadow['rank1_rank2_gap'] < 0:
+                    issues.append('NEGATIVE_GAP')
+                if set(shadow.get('probabilities') or {}) != {
+                        'FIELD_BASELINE', 'GAP_ONLY_CHALLENGER',
+                        'FIELD_GAP_INTERACTION_CHALLENGER'}:
+                    issues.append('INCOMPLETE_PROBABILITIES')
+                if any(not (0 < float(v) < 1) for v in shadow['probabilities'].values()):
+                    issues.append('INVALID_PROBABILITY')
         except (KeyError, TypeError, ValueError, OverflowError):
             issues.append('INCOMPLETE_OR_INVALID_SHADOW')
         probabilities = shadow.get('probabilities') or {}
@@ -153,10 +184,15 @@ def audit_archives(archives):
             'server_archived_at': a.get('created_at'),
             'research_config_sha256': shadow.get('research_config_sha256'),
             'field_size': shadow.get('field_size'), 'score_gap': shadow.get('rank1_rank2_gap'),
+            'unscored_count': shadow.get('unscored_count', 0),
+            'confidence_status': shadow.get('status'),
             'field_baseline_p': probabilities.get('FIELD_BASELINE'),
             'score_gap_p': probabilities.get('GAP_ONLY_CHALLENGER'),
             'field_gap_interaction_p': probabilities.get('FIELD_GAP_INTERACTION_CHALLENGER'),
-            'status': 'CAPTURED_SCHEDULE_ONLY_NOT_CERTIFIED' if not issues else 'INVALID',
+            'status': ('INVALID' if issues else
+                       'CAPTURED_NO_CONFIDENCE_UNSCORED' if shadow.get('status') ==
+                       'PREREGISTERED_CONFIDENCE_UNAVAILABLE_UNSCORED' else
+                       'CAPTURED_SCHEDULE_ONLY_NOT_CERTIFIED'),
             'issues': ';'.join(issues),
         })
     return records
