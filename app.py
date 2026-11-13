@@ -1,3 +1,4 @@
+import v061n_relative_lab
 import v061m_capture
 import v061l_confidence
 import v061i_analysis
@@ -1680,6 +1681,8 @@ with t5:
     v061l_confidence.render(secret)
     st.divider()
     v061m_capture.render(secret)
+    st.divider()
+    v061n_relative_lab.render(secret)
     st.divider()
     v060_validation_hub.render(db_rows)
     st.divider()
