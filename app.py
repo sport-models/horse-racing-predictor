@@ -1,3 +1,4 @@
+import v061l_confidence
 import v061i_analysis
 import v061j_integrity
 import v061k_integrity
@@ -1674,6 +1675,8 @@ with t5:
     v061k_integrity.render(secret)
     st.divider()
     v061k_stage2.render(secret)
+    st.divider()
+    v061l_confidence.render(secret)
     st.divider()
     v060_validation_hub.render(db_rows)
     st.divider()
