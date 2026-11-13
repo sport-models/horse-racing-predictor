@@ -258,6 +258,8 @@ def archive_locked_batch(db_client, batch_id, prepared):
     payload = dict(prepared['payload'])
     from v061m_capture import attach_shadow
     payload = attach_shadow(payload)  # SAME immutable archive row/hash as v0.2 rankings
+    from v061r_class_validation import attach_class_shadow
+    payload = attach_class_shadow(payload)  # Frozen at-lock class hypotheses, no score edits
     if payload.get('model_version') != FROZEN_MODEL:
         raise ValueError('Incorrect model version')
     saved = db_client.table('race_predictions').select('horse,model_rank,form_score').eq(

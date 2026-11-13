@@ -1,3 +1,4 @@
+import v061r_class_validation
 import v061q_stayer_validation
 import v061p_race_type_lab
 import v061o_weight_lab
@@ -1692,6 +1693,8 @@ with t5:
     v061p_race_type_lab.render(secret)
     st.divider()
     v061q_stayer_validation.render(secret)
+    st.divider()
+    v061r_class_validation.render(secret)
     st.divider()
     v060_validation_hub.render(db_rows)
     st.divider()
