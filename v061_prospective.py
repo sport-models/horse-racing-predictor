@@ -256,6 +256,8 @@ def archive_locked_batch(db_client, batch_id, prepared):
     """Single immutable Postgres INSERT for evidence; checks existing saved batch."""
     uuid.UUID(str(batch_id))
     payload = dict(prepared['payload'])
+    from v061m_capture import attach_shadow
+    payload = attach_shadow(payload)  # SAME immutable archive row/hash as v0.2 rankings
     if payload.get('model_version') != FROZEN_MODEL:
         raise ValueError('Incorrect model version')
     saved = db_client.table('race_predictions').select('horse,model_rank,form_score').eq(

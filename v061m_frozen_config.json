@@ -1,0 +1,43 @@
+{
+  "WARNING": "Not an independent point-in-time model. Predictions on already-run races are retroactively calculated; never label as pre-race shadow evidence.",
+  "config_sha256": "d1c05d1e838cce3a4b2c3336e89cfaf26f0c1810b8831e5b93122a03c62428b2",
+  "created_by": "historical retrospective research",
+  "frozen_production_model": "v0.2",
+  "holdout_end": "2026-11-08",
+  "holdout_races": 586,
+  "holdout_start": "2026-10-31",
+  "models": {
+    "FIELD_BASELINE": {
+      "coefficients": [
+        -1.2898498738024646,
+        -0.8125454765988401
+      ],
+      "features": "intercept,log(field_size/10),gap/10,[interaction if applicable]",
+      "l2_penalty": 1.0
+    },
+    "FIELD_GAP_INTERACTION_CHALLENGER": {
+      "coefficients": [
+        -1.4286749041890499,
+        -0.9768297865940891,
+        0.1637966600873497,
+        0.2203395288472058
+      ],
+      "features": "intercept,log(field_size/10),gap/10,[interaction if applicable]",
+      "l2_penalty": 1.0
+    },
+    "GAP_ONLY_CHALLENGER": {
+      "coefficients": [
+        -1.4076767642062609,
+        -0.7868113599941795,
+        0.13698325922733093
+      ],
+      "features": "intercept,log(field_size/10),gap/10,[interaction if applicable]",
+      "l2_penalty": 1.0
+    }
+  },
+  "training_dataset_sha256": "9959d22fc55ebab3496bb282021427f34f64f0c13f52f5118c64eed9d904fe39",
+  "training_end": "2026-10-30",
+  "training_races": 927,
+  "training_start": "2026-10-10",
+  "version": "v0.6.1l"
+}
