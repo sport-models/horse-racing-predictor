@@ -90,9 +90,18 @@ def make_reports(races: pd.DataFrame, features: pd.DataFrame, batches: list[dict
     f['rank_numeric']=pd.to_numeric(f.model_rank,errors='coerce')
     f['score_numeric']=pd.to_numeric(f.model_score,errors='coerce').replace([np.inf,-np.inf],np.nan)
     f=f[f.rank_numeric.notna()].copy()
-    cnt=f.groupby('batch_id').agg(ranked_count=('rank_numeric','size'),scored_count=('score_numeric','count'))
-    cnt['unscored_count']=cnt.ranked_count-cnt.scored_count
+    # Historical reports already contain ranked_count. Use namespaced aggregation
+    # columns so pandas never creates ranked_count_x / ranked_count_y after merge.
+    cnt=f.groupby('batch_id').agg(_v061p_ranked=('rank_numeric','size'),
+                                  _v061p_scored=('score_numeric','count'))
+    cnt['_v061p_unscored']=cnt['_v061p_ranked']-cnt['_v061p_scored']
     r=r.merge(m,on='batch_id',validate='one_to_one').merge(cnt,on='batch_id',how='left',validate='one_to_one')
+    if 'ranked_count' in r:
+        r['archived_ranked_count']=pd.to_numeric(r['ranked_count'],errors='coerce')
+    r['ranked_count']=r['_v061p_ranked']
+    r['scored_count']=r['_v061p_scored']
+    r['unscored_count']=r['_v061p_unscored']
+    r=r.drop(columns=['_v061p_ranked','_v061p_scored','_v061p_unscored'])
     r['actual_starters_num']=pd.to_numeric(r.actual_starters,errors='coerce')
     r['winner_count_num']=pd.to_numeric(r.winner_count,errors='coerce')
     r['race_day']=pd.to_datetime(r.race_date,errors='coerce')
@@ -147,7 +156,10 @@ def make_reports(races: pd.DataFrame, features: pd.DataFrame, batches: list[dict
             'excess_vs_random_pp':100*delta.mean(),'day_bootstrap_ci_low_pp':low,'day_bootstrap_ci_high_pp':high,
             'note':'Descriptive historical subgroup only; many comparisons, not a prospective signal'})
     uncertainty=pd.DataFrame(uncertainty)
-    integrity=r[['batch_id','race_date','track','race_number','distance_m','distance_source','maiden_group','maiden_source','ranked_count','scored_count','unscored_count','actual_starters_num','status','eligible','exclusion_reason','distance_band','field_band','score_band']].copy()
+    integrity_cols=['batch_id','race_date','track','race_number','distance_m','distance_source','maiden_group','maiden_source','ranked_count','scored_count','unscored_count','actual_starters_num','status','eligible','exclusion_reason','distance_band','field_band','score_band']
+    if 'archived_ranked_count' in r.columns:
+        integrity_cols.append('archived_ranked_count')
+    integrity=r[integrity_cols].copy()
     coverage=pd.DataFrame([{'version':VERSION,'archived_races':len(r),'eligible_races':len(valid),
         'distance_available_eligible':int(valid.distance_m.notna().sum()),'explicit_maiden_eligible':int((valid.maiden_group=='EXPLICIT_MAIDEN').sum()),
         'explicit_non_maiden_eligible':int((valid.maiden_group=='EXPLICIT_NON_MAIDEN').sum()),

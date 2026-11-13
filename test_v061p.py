@@ -33,6 +33,19 @@ class V061PTests(unittest.TestCase):
         self.assertTrue((reports['eligible_race_categories']['score_band']=='ONE_UNSCORED').all())
         self.assertEqual(reports['summary'].iloc[0]['holdout_races'],3)
         self.assertEqual(reports['summary'].iloc[0]['development_races'],7)
+    def test_historical_ranked_count_collision(self):
+        # The real v061b build_reports supplies ranked_count itself.
+        # This previously caused pandas suffixes and an AttributeError.
+        r,f,b=self.sample()
+        r['ranked_count']=2
+        r['unscored_ranked_count']=1
+        reports=make_reports(r,f,b)
+        self.assertEqual(int(reports['summary'].iloc[0]['eligible_races']),10)
+        integrity=reports['integrity']
+        self.assertTrue((integrity['ranked_count']==2).all())
+        self.assertTrue((integrity['scored_count']==1).all())
+        self.assertTrue((integrity['unscored_count']==1).all())
+        self.assertTrue((integrity['archived_ranked_count']==2).all())
     def test_duplicate_batch_stops(self):
         r,f,b=self.sample();r=pd.concat([r,r.iloc[:1]])
         with self.assertRaisesRegex(ValueError,'Duplicate race'):make_reports(r,f,b)
