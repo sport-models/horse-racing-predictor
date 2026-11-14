@@ -717,6 +717,70 @@ def prospective_dashboard(report):
 
 
 
+
+def render_track_performance(secret):
+    """Production Performance tab: read-only, prospective track breakdown."""
+    st.subheader('🏇 Prospective model performance by track')
+    st.caption('Frozen v0.2 predictions; results provisional. These are model picks, '
+               'not your actual settled bets. Small track samples are not reliable edges.')
+    try:
+        client = archive_client(secret)
+        archives = _read_all(client, TABLE, order='created_at')
+        results = _read_all(client, 'runner_results')
+        report = evaluate_archives(archives, results)
+    except Exception as exc:
+        st.warning('Prospective track metrics unavailable: ' + str(exc))
+        return
+    races = report['races']
+    eligible = races[races['status'].eq('EVALUABLE_PROVISIONAL')].copy()
+    if eligible.empty:
+        st.info('No evaluable prospective race results yet.')
+        return
+    grouped = (eligible.groupby('track', dropna=False)
+               .agg(evaluated_races=('batch_id', 'count'),
+                    top1_winners=('top1_won', 'sum'),
+                    top3_hits=('top3_hit', 'sum'),
+                    random_expected_wins=('random_top1_expected', 'sum'))
+               .reset_index())
+    grouped['top1_win_pct'] = 100 * grouped['top1_winners'] / grouped['evaluated_races']
+    grouped['top3_hit_pct'] = 100 * grouped['top3_hits'] / grouped['evaluated_races']
+    paired = report['market_paired']
+    if not paired.empty:
+        comparison = (paired.groupby('track', dropna=False)
+                      .agg(paired_races=('batch_id', 'count'),
+                           model_wins_paired=('top1_won', 'sum'),
+                           favourite_wins_paired=('market_favourite_won', 'sum'))
+                      .reset_index())
+        grouped = grouped.merge(comparison, on='track', how='left')
+    else:
+        grouped['paired_races'] = 0
+    runners = report['runner_audit']
+    if not runners.empty and not paired.empty:
+        picks = runners[runners['saved_rank'].eq(1)].copy()
+        picks = picks[picks['batch_id'].isin(set(paired['batch_id']))]
+        picks = picks[~picks['selection_is_retroactive_if_top1_scratched'].eq(True)]
+        picks['odds'] = pd.to_numeric(picks['market_win_odds'], errors='coerce')
+        picks = picks[picks['odds'].gt(1)].copy()
+        if not picks.empty:
+            picks['profit_units'] = picks['won'].astype(float) * picks['odds'] - 1
+            roi = (picks.groupby('track', dropna=False)
+                   .agg(simulated_bets=('batch_id', 'count'),
+                        simulated_profit_units=('profit_units', 'sum'))
+                   .reset_index())
+            roi['simulated_roi_pct'] = 100 * roi['simulated_profit_units'] / roi['simulated_bets']
+            grouped = grouped.merge(roi, on='track', how='left')
+    st.dataframe(grouped.sort_values('evaluated_races', ascending=False),
+                 hide_index=True, use_container_width=True)
+    st.download_button('Download prospective track performance CSV',
+                       grouped.to_csv(index=False).encode('utf-8'),
+                       file_name='v061w_prospective_track_performance.csv',
+                       mime='text/csv', key='v061w_prod_track_csv')
+    st.caption('Market comparisons and hypothetical ROI use the same paired-market race cohort. '
+               'ROI excludes picks without valid stored odds; counts show the denominator. '
+               'Actual-off and provider input-as-of provenance remain uncertified.')
+
+
+
 def render(secret):
     st.subheader('🔐 v0.6.1 — Prospective Prediction Validation')
     st.caption('New immutable, at-lock source captures only. Historical 1,040 and old 18 races are NOT backfilled. '
