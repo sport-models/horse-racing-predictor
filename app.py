@@ -1,3 +1,4 @@
+import v061s_feature_audit_ui
 import v061r_class_validation
 import v061q_stayer_validation
 import v061p_race_type_lab
@@ -1065,8 +1066,7 @@ def analysis_tab():
     if not rated.empty:
         top = rated.iloc[0]
         st.success(f"🏆 Best Chance: {top['Horse']} — Form Score {top['Form Score']:.2f}")
-    st.subheader('📊 Full Race Rankings')
-    st.dataframe(df, hide_index=True, use_container_width=True)
+    # v0.6.1s: combined rankings and odds appear below; avoid duplicate tables.
 
     # v0.3 bookmaker prices are displayed separately from
     # the model's independent form-based rankings.
@@ -1135,12 +1135,14 @@ def analysis_tab():
         validate="one_to_one"
     )
 
-    st.subheader("💰 Sportsbet & Best Available Odds")
+    st.subheader("📊 Full race rankings & bookmaker odds")
     st.dataframe(
         display_df,
         hide_index=True,
         use_container_width=True
     )
+
+    v061s_feature_audit_ui.render_analysis_explanations(analysis['race_data'], df)
 
     with st.expander("Compare all bookmakers"):
         comparison = []
@@ -1172,8 +1174,7 @@ def analysis_tab():
         datetime.now(timezone.utc).isoformat()
     )
 
-    st.subheader('⭐ Top Five Model Selections')
-    st.dataframe(df.head(5), hide_index=True, use_container_width=True)
+    # v0.6.1s: top five are already rows 1–5 of the consolidated full-field table.
     with st.expander('How rankings are calculated'):
         st.dataframe(pd.DataFrame({'Factor': ['Recent Form', 'Career Performance', 'Track Performance',
             'Distance Performance', 'Track & Distance', 'Barrier & Weight'],
@@ -1693,6 +1694,8 @@ with t5:
     v061p_race_type_lab.render(secret)
     st.divider()
     v061q_stayer_validation.render(secret)
+    st.divider()
+    v061s_feature_audit_ui.render_feature_audit(secret)
     st.divider()
     v061r_class_validation.render(secret)
     st.divider()
