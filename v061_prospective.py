@@ -812,6 +812,11 @@ def render_track_performance(secret, bets=None):
         grouped = grouped.reindex(columns=columns)
     else:
         grouped = pd.DataFrame(columns=columns)
+    if eligible.empty:
+        st.info('No evaluable v0.6.1 prospective archives in this date range. '
+                'Earlier saved predictions (including possible Flemington meetings) '
+                'are not automatically part of the v0.6.1 prospective archive. '
+                'Your actual settled bets, if any, are shown separately below.')
     st.markdown('**MODEL — prospective predictions (not actual bets)**')
     st.dataframe(grouped, hide_index=True, use_container_width=True)
     st.download_button('Download filtered model track CSV',
