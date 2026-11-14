@@ -536,6 +536,411 @@ def _read_all(client, table, order=None, descending=False):
         offset += len(rows)
 
 
+
+def audit_locked_prediction_rows(archives, legacy_rows):
+    """Read-only archive inventory, including races with no results yet.
+
+    No result data, fresh odds, or refreshed rankings are used.
+    """
+    legacy_by_batch = defaultdict(list)
+    for row in legacy_rows:
+        legacy_by_batch[str(row.get('prediction_batch_id'))].append(row)
+    summary, detail = [], []
+    seen_races = set()
+    for archive in archives:
+        batch = str(archive.get('batch_id') or '')
+        payload = archive.get('payload') or {}
+        rankings = payload.get('rankings') or []
+        source = payload.get('source_times') or {}
+        odds = payload.get('odds_quotes') or {}
+        saved = legacy_by_batch.get(batch, [])
+        issues = []
+        key = (str(archive.get('race_date')), normalize_track(str(archive.get('track'))),
+               str(archive.get('race_number')))
+        if key in seen_races:
+            issues.append('DUPLICATE_RACE_ARCHIVE')
+        seen_races.add(key)
+        if not rankings:
+            issues.append('NO_ARCHIVED_RANKINGS')
+        if payload.get('model_version') != FROZEN_MODEL or archive.get('model_version') != FROZEN_MODEL:
+            issues.append('MODEL_VERSION_MISMATCH')
+        if payload.get('original_prediction_batch_id') != batch:
+            issues.append('BATCH_ID_MISMATCH')
+        if payload.get('original_prediction_count_verified') != len(rankings):
+            issues.append('ARCHIVED_COUNT_MISMATCH')
+        if len(saved) != len(rankings):
+            issues.append('LEGACY_COUNT_MISMATCH')
+        else:
+            try:
+                validate_saved_batch(saved, rankings)
+            except (ValueError, TypeError, KeyError) as exc:
+                issues.append('LEGACY_RANK_OR_SCORE_MISMATCH')
+        if archive.get('payload_sha256') != digest(payload):
+            issues.append('PAYLOAD_HASH_MISMATCH')
+        if not started_before_schedule(source.get('ranking_generated_utc'),
+                                       archive.get('scheduled_start_utc')):
+            issues.append('RANKING_NOT_BEFORE_SCHEDULE')
+        if not started_before_schedule(archive.get('created_at'),
+                                       archive.get('scheduled_start_utc')):
+            issues.append('ARCHIVE_NOT_BEFORE_SCHEDULE')
+        try:
+            lead_seconds = (iso_timestamp(archive.get('scheduled_start_utc')) -
+                            iso_timestamp(archive.get('created_at'))).total_seconds()
+            if lead_seconds < 300:
+                issues.append('ARCHIVE_LESS_THAN_5_MIN_BEFORE_SCHEDULE')
+        except (TypeError, AttributeError):
+            lead_seconds = None
+            issues.append('MISSING_TIMING_EVIDENCE')
+        rank_keys = [canonical(r.get('horse')) for r in rankings if isinstance(r, dict)]
+        if len(rank_keys) != len(rankings) or not all(rank_keys) or len(rank_keys) != len(set(rank_keys)):
+            issues.append('DUPLICATE_OR_BLANK_RUNNER')
+        if sorted(r.get('rank') for r in rankings if isinstance(r, dict)) != list(range(1, len(rankings)+1)):
+            issues.append('INVALID_RANK_SEQUENCE')
+        summary.append({
+            'batch_id': batch, 'race_date': archive.get('race_date'),
+            'track': archive.get('track'), 'race_number': archive.get('race_number'),
+            'archive_created_at_utc': archive.get('created_at'),
+            'scheduled_start_utc': archive.get('scheduled_start_utc'),
+            'lead_minutes': lead_seconds / 60 if lead_seconds is not None else None,
+            'ranking_generated_utc': source.get('ranking_generated_utc'),
+            'form_response_received_utc': source.get('form_response_received_utc'),
+            'runner_count': len(rankings), 'legacy_runner_count': len(saved),
+            'odds_capture_status': payload.get('bookmaker_capture_status'),
+            'runner_with_any_quotes': sum(bool(odds.get(str(r.get('horse')))) for r in rankings if isinstance(r, dict)),
+            'archive_status': 'PASS_SCHEDULE_ONLY' if not issues else '|'.join(sorted(set(issues))),
+            'actual_off_certified': bool(payload.get('official_actual_off_verified')),
+            'input_asof_certified': bool(payload.get('input_asof_provenance_verified')),
+        })
+        for r in rankings:
+            if not isinstance(r, dict):
+                continue
+            horse = str(r.get('horse') or '')
+            quotes = odds.get(horse) or []
+            detail.append({
+                'batch_id': batch, 'race_date': archive.get('race_date'),
+                'track': archive.get('track'), 'race_number': archive.get('race_number'),
+                'horse': horse, 'locked_rank': r.get('rank'), 'locked_score': r.get('score'),
+                'archive_created_at_utc': archive.get('created_at'),
+                'scheduled_start_utc': archive.get('scheduled_start_utc'),
+                'odds_capture_status': payload.get('bookmaker_capture_status'),
+                'bookmaker_quote_count': len(quotes) if isinstance(quotes, list) else 0,
+                'bookmaker_quotes_at_lock_json': js(quotes),
+            })
+    return pd.DataFrame(summary), pd.DataFrame(detail)
+
+
+
+
+def prospective_dashboard(report):
+    """Read-only research dashboard; only archived quotes and saved final results."""
+    races = report['races']
+    evaluated = races[races['status'].eq('EVALUABLE_PROVISIONAL')].copy()
+    st.subheader('📊 v0.6.1w — Prospective Performance Dashboard')
+    st.caption('Provisional scheduled-start evidence only. No live betting advice, no model '
+               'promotion, no retrospective selection substitutions.')
+    total = len(races)
+    paired = report['market_paired']
+    cols = st.columns(4)
+    cols[0].metric('Archived races', total)
+    cols[1].metric('Evaluable results', len(evaluated))
+    cols[2].metric('Top-ranked winners', f"{int(evaluated['top1_won'].sum())}/{len(evaluated)}" if len(evaluated) else '—')
+    cols[3].metric('Paired market races', len(paired))
+    st.progress(min(total / 200, 1.0), text=f'{total} / 200 archived races (collection target, not a promotion threshold)')
+    if evaluated.empty:
+        st.info('No complete, eligible results yet. Results are never inferred from odds.')
+        return
+    st.write('**Provisional model accuracy**')
+    st.dataframe(pd.DataFrame([{
+        'evaluated_races': len(evaluated),
+        'top1_win_rate': float(evaluated['top1_won'].mean()),
+        'top3_hit_rate': float(evaluated['top3_hit'].mean()),
+        'random_top1_expected_wins': float(evaluated['random_top1_expected'].sum()),
+        'actual_top1_wins': int(evaluated['top1_won'].sum()),
+    }]), hide_index=True, use_container_width=True)
+    by_track = (evaluated.groupby('track', dropna=False)
+                .agg(races=('batch_id', 'count'), top1_wins=('top1_won', 'sum'),
+                     top3_hits=('top3_hit', 'sum')).reset_index())
+    by_track['top1_rate'] = by_track['top1_wins'] / by_track['races']
+    st.write('**Performance by track (small samples may be misleading)**')
+    st.dataframe(by_track.sort_values('races', ascending=False),
+                 hide_index=True, use_container_width=True)
+    if not paired.empty:
+        st.write('**Model vs market favourite — same eligible paired races**')
+        st.dataframe(pd.DataFrame([{
+            'paired_races': len(paired),
+            'model_top1_wins': int(paired['top1_won'].sum()),
+            'market_favourite_wins': int(paired['market_favourite_won'].sum()),
+            'same_selection_count': int(paired['model_vs_market_same_horse'].sum()),
+        }]), hide_index=True, use_container_width=True)
+    runners = report['runner_audit']
+    if not runners.empty:
+        # Original rank #1 only. Never replace a scratched pick after the fact.
+        picks = runners[runners['saved_rank'].eq(1)].copy()
+        picks = picks[picks['batch_id'].isin(set(paired['batch_id']))]
+        picks = picks[~picks['selection_is_retroactive_if_top1_scratched'].eq(True)]
+        odds = pd.to_numeric(picks['market_win_odds'], errors='coerce')
+        picks = picks[odds.gt(1)].copy()
+        if not picks.empty:
+            picks['win_odds_at_lock'] = pd.to_numeric(picks['market_win_odds'])
+            picks['hypothetical_profit_1u'] = picks['won'].astype(float) * picks['win_odds_at_lock'] - 1.0
+            st.write('**Hypothetical flat-stake win-only return (1 unit per race)**')
+            st.caption('Only original rank-1 selections from the SAME eligible paired-market races with archived odds. '
+                       'No place bets, commissions, deductions or transaction costs included.')
+            st.dataframe(pd.DataFrame([{
+                'eligible_bets': len(picks),
+                'staked_units': len(picks),
+                'profit_units': float(picks['hypothetical_profit_1u'].sum()),
+                'roi': float(picks['hypothetical_profit_1u'].mean()),
+            }]), hide_index=True, use_container_width=True)
+            track_roi = (picks.groupby('track', dropna=False)
+                         .agg(bets=('batch_id', 'count'), wins=('won', 'sum'),
+                              profit_units=('hypothetical_profit_1u', 'sum'))
+                         .reset_index())
+            track_roi['roi_pct'] = 100 * track_roi['profit_units'] / track_roi['bets']
+            st.write('**Hypothetical ROI by track — matched market sample only**')
+            st.dataframe(track_roi.sort_values('bets', ascending=False),
+                         hide_index=True, use_container_width=True)
+            st.download_button('Download provisional track ROI CSV',
+                               track_roi.to_csv(index=False).encode('utf-8'),
+                               file_name='v061w_track_roi.csv', mime='text/csv',
+                               key='v061w_track_roi_csv')
+            st.download_button('Download provisional flat-stake simulation',
+                               picks.to_csv(index=False).encode('utf-8'),
+                               file_name='v061w_flat_stake_simulation.csv',
+                               mime='text/csv', key='v061w_sim_csv')
+    st.write('**Data quality and unresolved evidence**')
+    counts = (report['missing_evidence'].groupby('reason').size()
+              .reset_index(name='race_flags').sort_values('race_flags', ascending=False))
+    st.dataframe(counts, hide_index=True, use_container_width=True)
+    st.warning('PROMOTION GATE CLOSED: independent actual-off time and form input-as-of '
+               'provenance are not certified. Results remain research-only.')
+
+
+
+
+def historical_saved_prediction_track_metrics(predictions, result_rows, prospective_race_keys,
+                                              in_window, selected_track):
+    """Legacy earliest saved batches only; exclude prospective races, never backfill archives."""
+    from v045_result_lookup import result_index
+    from v042_results import earliest_batch
+    grouped = defaultdict(list)
+    for p in predictions:
+        try:
+            key = (str(p['race_date'])[:10], str(p['track']), int(p['race_number']))
+        except (KeyError, ValueError, TypeError):
+            continue
+        if in_window(key[0]) and (selected_track == 'All tracks' or key[1] == selected_track):
+            grouped[key].append(p)
+    index = result_index(result_rows)
+    rows, skipped = [], defaultdict(int)
+    for key, records in grouped.items():
+        normalized_key = (key[0], normalize_track(key[1]), key[2])
+        if normalized_key in prospective_race_keys:
+            skipped['already_in_prospective'] += 1
+            continue
+        try:
+            batch_id, selected = earliest_batch(records, key)
+            selected = sorted(selected, key=lambda x: int(x['model_rank']))
+            ranks = [int(x['model_rank']) for x in selected]
+            if ranks != list(range(1, len(selected)+1)):
+                skipped['invalid_rank_sequence'] += 1
+                continue
+            result_matches = [r for (day, track, race, horse), vals in index.items()
+                              if (day, track, race) == normalized_key for r in vals]
+            if not result_matches or any(r.get('result_status') != 'final' for r in result_matches):
+                skipped['missing_final_results'] += 1
+                continue
+            result_horses = [canonical(x.get('horse_key') or x.get('horse')) for x in result_matches]
+            if len(result_horses) != len(set(result_horses)):
+                skipped['duplicate_result_horse'] += 1
+                continue
+            winners = [x for x in result_matches
+                       if not x.get('scratched') and str(x.get('finishing_position')) == '1']
+            if len(winners) != 1:
+                skipped['invalid_winner'] += 1
+                continue
+            starters = {canonical(x.get('horse_key') or x.get('horse')) for x in result_matches
+                        if not x.get('scratched')}
+            predicted = {canonical(x['horse']) for x in selected}
+            if not starters.issubset(predicted):
+                skipped['incomplete_field'] += 1
+                continue
+            winner = canonical(winners[0].get('horse_key') or winners[0].get('horse'))
+            rank_by_horse = {canonical(x['horse']): int(x['model_rank']) for x in selected}
+            rows.append({'track': key[1], 'race_date': key[0], 'race_number': key[2],
+                         'batch_id': batch_id, 'field_size': len(starters),
+                         'top1_won': int(rank_by_horse.get(winner) == 1),
+                         'top3_hit': int(rank_by_horse.get(winner, 999) <= 3)})
+        except (KeyError, ValueError, TypeError):
+            skipped['invalid_saved_batch'] += 1
+    return pd.DataFrame(rows), dict(skipped)
+
+
+def render_track_performance(secret, bets=None, predictions=None):
+    """Read-only production track view: actual settled bets vs model simulation."""
+    from zoneinfo import ZoneInfo
+    st.subheader('🏇 Performance by track — actual vs simulated')
+    st.caption('ACTUAL = your settled bet ledger. SIMULATED = hypothetical 1-unit '
+               'win bets on original rank #1 using saved bookmaker odds. '
+               'They are different populations and must not be compared as identical stakes.')
+    try:
+        client = archive_client(secret)
+        archives = _read_all(client, TABLE, order='created_at')
+        results = _read_all(client, 'runner_results')
+        report = evaluate_archives(archives, results)
+    except Exception as exc:
+        st.warning('Prospective track metrics unavailable: ' + str(exc))
+        return
+    races = report['races']
+    dates = sorted(set(str(x)[:10] for x in races['race_date'].dropna())) if not races.empty else []
+    if bets:
+        dates = sorted(set(dates) | set(str(x.get('race_date'))[:10] for x in bets if x.get('race_date')))
+    if not dates:
+        st.info('No archived races or recorded bets.')
+        return
+    today = utc_now().astimezone(ZoneInfo(DATE_ZONE)).date()
+    choice = st.radio('Meeting dates', ['All dates', 'Today', 'Date range'],
+                      horizontal=True, key='v061w_track_date_mode')
+    start_date, end_date = None, None
+    if choice == 'Today':
+        start_date = end_date = today.isoformat()
+    elif choice == 'Date range':
+        from datetime import date as date_type
+        default_end = min(today, date_type.fromisoformat(dates[-1]))
+        default_start = date_type.fromisoformat(dates[0])
+        selected_range = st.date_input(
+            'Choose start and end dates', value=(default_start, default_end),
+            key='v061w_track_date_range')
+        if not isinstance(selected_range, (tuple, list)) or len(selected_range) != 2:
+            st.info('Select both the start and end date to display results.')
+            return
+        start_date, end_date = (selected_range[0].isoformat(),
+                                selected_range[1].isoformat())
+        if start_date > end_date:
+            st.error('Start date must not be after end date.')
+            return
+    def in_window(value):
+        day = str(value or '')[:10]
+        return bool(day) and (start_date is None or start_date <= day <= end_date)
+    if start_date is not None:
+        races = races[races['race_date'].map(in_window)].copy()
+    tracks = sorted(set(races['track'].dropna().astype(str)))
+    if bets:
+        tracks = sorted(set(tracks) | set(str(x.get('track')) for x in bets
+                                          if x.get('track') and
+                                          in_window(x.get('race_date'))))
+    selected_track = st.selectbox('Racecourse', ['All tracks'] + tracks,
+                                  key='v061w_track_filter')
+    if selected_track != 'All tracks':
+        races = races[races['track'].eq(selected_track)].copy()
+    eligible = races[races['status'].eq('EVALUABLE_PROVISIONAL')].copy()
+    paired = report['market_paired']
+    paired = paired[paired['batch_id'].isin(set(eligible['batch_id']))].copy()
+    columns = ['track', 'evaluated_races', 'top1_winners', 'top1_win_pct',
+               'top3_hit_pct', 'paired_races', 'model_wins_paired',
+               'favourite_wins_paired', 'simulated_bets', 'simulated_profit_units',
+               'simulated_roi_pct']
+    if not eligible.empty:
+        grouped = (eligible.groupby('track', dropna=False)
+                   .agg(evaluated_races=('batch_id', 'count'),
+                        top1_winners=('top1_won', 'sum'),
+                        top3_hits=('top3_hit', 'sum')).reset_index())
+        grouped['top1_win_pct'] = 100 * grouped['top1_winners'] / grouped['evaluated_races']
+        grouped['top3_hit_pct'] = 100 * grouped['top3_hits'] / grouped['evaluated_races']
+        if not paired.empty:
+            comparison = (paired.groupby('track', dropna=False)
+                          .agg(paired_races=('batch_id', 'count'),
+                               model_wins_paired=('top1_won', 'sum'),
+                               favourite_wins_paired=('market_favourite_won', 'sum'))
+                          .reset_index())
+            grouped = grouped.merge(comparison, on='track', how='left')
+            runners = report['runner_audit']
+            picks = runners[runners['saved_rank'].eq(1) &
+                            runners['batch_id'].isin(set(paired['batch_id']))].copy()
+            picks = picks[~picks['selection_is_retroactive_if_top1_scratched'].eq(True)]
+            picks['odds'] = pd.to_numeric(picks['market_win_odds'], errors='coerce')
+            picks = picks[picks['odds'].gt(1)].copy()
+            if not picks.empty:
+                picks['profit_units'] = picks['won'].astype(float) * picks['odds'] - 1
+                sim = (picks.groupby('track', dropna=False)
+                       .agg(simulated_bets=('batch_id', 'count'),
+                            simulated_profit_units=('profit_units', 'sum')).reset_index())
+                sim['simulated_roi_pct'] = 100 * sim['simulated_profit_units'] / sim['simulated_bets']
+                grouped = grouped.merge(sim, on='track', how='left')
+        grouped = grouped.reindex(columns=columns)
+    else:
+        grouped = pd.DataFrame(columns=columns)
+    if eligible.empty:
+        st.info('No evaluable v0.6.1 prospective archives in this date range. '
+                'Earlier saved predictions (including possible Flemington meetings) '
+                'are not automatically part of the v0.6.1 prospective archive. '
+                'Your actual settled bets, if any, are shown separately below.')
+    st.markdown('**MODEL — prospective predictions (not actual bets)**')
+    st.dataframe(grouped, hide_index=True, use_container_width=True)
+    st.download_button('Download filtered model track CSV',
+                       grouped.to_csv(index=False).encode('utf-8'),
+                       file_name='v061w_model_track_filtered.csv',
+                       mime='text/csv', key='v061w_prod_track_csv')
+
+    st.markdown('**EARLIER SAVED PREDICTIONS — separate legacy evidence**')
+    st.caption('Earliest saved prediction batch per race, matched to complete final runner results. '
+               'Not independently certified prospective snapshots. No simulated ROI is inferred.')
+    prospective_keys = {(str(x.get('race_date'))[:10],
+                         normalize_track(str(x.get('track'))),
+                         int(x.get('race_number')))
+                        for x in archives if x.get('race_number') is not None}
+    try:
+        legacy_rows, skipped = historical_saved_prediction_track_metrics(
+            predictions or [], results, prospective_keys, in_window, selected_track)
+        if legacy_rows.empty:
+            st.info('No eligible earlier saved predictions with complete final results for this selection.')
+        else:
+            legacy_group = (legacy_rows.groupby('track')
+                            .agg(evaluated_races=('batch_id', 'count'),
+                                 top1_winners=('top1_won', 'sum'),
+                                 top3_hits=('top3_hit', 'sum')).reset_index())
+            legacy_group['top1_win_pct'] = 100 * legacy_group['top1_winners'] / legacy_group['evaluated_races']
+            legacy_group['top3_hit_pct'] = 100 * legacy_group['top3_hits'] / legacy_group['evaluated_races']
+            st.dataframe(legacy_group, hide_index=True, use_container_width=True)
+            st.download_button('Download earlier saved prediction metrics',
+                               legacy_group.to_csv(index=False).encode('utf-8'),
+                               file_name='v061w_legacy_track_metrics.csv', mime='text/csv',
+                               key='v061w_legacy_track_csv')
+        if skipped:
+            st.caption('Legacy races excluded from metrics: ' +
+                       ', '.join(f'{k}: {v}' for k, v in sorted(skipped.items())))
+    except Exception as exc:
+        st.warning('Earlier saved prediction evaluation unavailable: ' + str(exc))
+    st.markdown('**ACTUAL — your settled bets by track**')
+    from v058_promotions import cash_stake, cash_profit
+    settled = [x for x in (bets or []) if x.get('status') == 'Settled'
+               and in_window(x.get('race_date'))
+               and (selected_track == 'All tracks' or str(x.get('track')) == selected_track)]
+    actual_rows = []
+    for bet in settled:
+        actual_rows.append({'track': str(bet.get('track') or 'Unknown'),
+                            'cash_stake': cash_stake(bet),
+                            'cash_profit': cash_profit(bet),
+                            'total_return': float(bet.get('total_return') or 0)})
+    if actual_rows:
+        actual = (pd.DataFrame(actual_rows).groupby('track')
+                  .agg(settled_bets=('cash_stake', 'count'),
+                       cash_staked=('cash_stake', 'sum'),
+                       actual_returns=('total_return', 'sum'),
+                       actual_profit=('cash_profit', 'sum')).reset_index())
+        actual['actual_roi_pct'] = actual['actual_profit'] / actual['cash_staked'].where(
+            actual['cash_staked'].ne(0)) * 100
+        st.dataframe(actual, hide_index=True, use_container_width=True)
+        st.download_button('Download filtered actual bet track CSV',
+                           actual.to_csv(index=False).encode('utf-8'),
+                           file_name='v061w_actual_bets_by_track.csv',
+                           mime='text/csv', key='v061w_actual_track_csv')
+    else:
+        st.info('No settled actual bets for the selected date and track.')
+    st.caption('Only settled bets count toward actual ROI; pending and void bets excluded. '
+               'Model simulation uses only archived paired-market odds and eligible final results. '
+               'Race-off times and provider input-as-of provenance remain uncertified.')
+
 def render(secret):
     st.subheader('🔐 v0.6.1 — Prospective Prediction Validation')
     st.caption('New immutable, at-lock source captures only. Historical 1,040 and old 18 races are NOT backfilled. '
@@ -552,6 +957,24 @@ def render(secret):
         st.info('No prospective snapshots yet. For an upcoming race, Analyse Race and click '
                 'Save & Lock All Race Predictions. A fresh at-lock archive will be captured.')
         return
+    if st.button('Audit & export ALL locked predictions (read-only)', key='v061_inventory'):
+        try:
+            legacy = _read_all(client, 'race_predictions')
+            inventory, details = audit_locked_prediction_rows(archives, legacy)
+        except Exception as exc:
+            st.error('Read-only locked prediction audit failed: '+str(exc))
+        else:
+            st.caption('Scheduled-start checks only; actual-off and input-as-of remain uncertified. '
+                       'Exports contain only stored at-lock evidence, never refreshed predictions.')
+            st.dataframe(inventory, hide_index=True, use_container_width=True)
+            st.download_button('Download locked race inventory CSV',
+                               inventory.to_csv(index=False).encode('utf-8'),
+                               file_name='v061_locked_race_inventory.csv', mime='text/csv',
+                               key='v061_inventory_csv')
+            st.download_button('Download ALL locked runner predictions CSV',
+                               details.to_csv(index=False).encode('utf-8'),
+                               file_name='v061_locked_runner_predictions.csv', mime='text/csv',
+                               key='v061_detail_csv')
     if st.button('Run v0.6.1 forward evidence audit', key='v061_run'):
         try:
             results = _read_all(client, 'runner_results', order=None)
@@ -560,6 +983,7 @@ def render(secret):
             st.error('Read-only evaluation failed: '+str(exc))
             return
         st.dataframe(report['summary'], hide_index=True, use_container_width=True)
+        prospective_dashboard(report)
         st.warning('PROMOTION GATE: CLOSED until independent actual-off time AND input point-in-time evidence '
                    'are verified. A scheduled start alone is not official actual-off verification.')
         st.dataframe(report['races'], hide_index=True, use_container_width=True)
