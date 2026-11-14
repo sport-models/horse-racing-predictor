@@ -18,6 +18,7 @@ import v057g_each_way_benchmark
 # v0.5.8 PROMO & FIELD SIZE INSTALLED
 import v061b_historical
 import v061_prospective
+import v061v_bulk_capture
 import v060_validation_hub
 import v059_score_separation
 import v058_field_size
@@ -1027,6 +1028,16 @@ def analysis_tab():
     if not races:
         st.warning('No races returned for this meeting.')
         return
+    v061v_bulk_capture.render(
+        meeting, races, selected_date.isoformat(),
+        api_key=api_key, puntersedge_key=secret('PUNTERSEDGE_API_KEY'),
+        db_client=v061_prospective.archive_client(secret),
+        get_value=get_value, meeting_name=meeting_name,
+        score_runner=score_runner, recent_form_score=recent_form_score,
+        win_rate=win_rate, as_number=as_number,
+        odds_find_race=odds_find_race, odds_runner_quotes=odds_runner_quotes,
+        puntersedge_request=puntersedge_request, get_items=get_items,
+        snapshot_race=snapshot_race)
     race = st.selectbox('Select Race', races, format_func=race_label)
     track_slug = get_value(meeting, 'slug', 'trackSlug', default=meeting_name(meeting).lower().replace(' ', '-'))
     race_number = get_value(race, 'raceNumber', 'number')
