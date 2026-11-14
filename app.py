@@ -1016,10 +1016,11 @@ def analysis_tab():
             for m in meetings if isinstance(m, dict)]), hide_index=True)
         with st.expander('Raw API response'):
             st.json(meetings_data)
+    scope = st.radio('Racecourse coverage', ['All Australian thoroughbred meetings', 'Original Victorian tracks'], horizontal=True, key='racecourse_scope')
     filtered = [m for m in meetings if isinstance(m, dict) and meeting_country(m) in ('au','aus','australia')
-                and any(norm_track(meeting_name(m)) == t or norm_track(meeting_name(m)).startswith(t + ' ') for t in TARGET_TRACKS)]
+                and (scope == 'All Australian thoroughbred meetings' or any(norm_track(meeting_name(m)) == t or norm_track(meeting_name(m)).startswith(t + ' ') for t in TARGET_TRACKS))]
     if not filtered:
-        st.warning('No selected Victorian racecourses returned for this date. Check API Meeting Diagnostics for venues returned by FormFav. Your saved bets and results remain accessible in the other tabs.')
+        st.warning('No eligible Australian thoroughbred meetings returned for this date. Check API Meeting Diagnostics for venues returned by FormFav. Your saved bets and results remain accessible in the other tabs.')
         return
     meeting = st.selectbox('Select Racecourse', filtered, format_func=meeting_name)
     races = get_items(meeting, 'races')
@@ -1518,7 +1519,7 @@ def puntersedge_tab():
                             "country": "AU",
                             "categories": "horse",
                             "include_unresolved": "true",
-                            "date": "2026-11-05"
+                            "date": date.today().isoformat()
                         }
                     )
 
@@ -1569,8 +1570,7 @@ def puntersedge_tab():
                             "country": "AU",
                             "categories": "horse",
                             "include_unresolved": "true",
-                            "venue": "Flemington",
-                            "num_races": 20
+                            "num_races": 100
                         }
                     )
 
