@@ -755,7 +755,7 @@ def historical_saved_prediction_track_metrics(predictions, result_rows, prospect
                 skipped['duplicate_result_horse'] += 1
                 continue
             winners = [x for x in result_matches
-                       if not x.get('scratched') and x.get('finishing_position') == 1]
+                       if not x.get('scratched') and str(x.get('finishing_position')) == '1']
             if len(winners) != 1:
                 skipped['invalid_winner'] += 1
                 continue
