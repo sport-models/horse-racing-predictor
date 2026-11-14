@@ -1,3 +1,4 @@
+import v061t_missing_data_ui
 import v061s_feature_audit_ui
 import v061r_class_validation
 import v061q_stayer_validation
@@ -1136,13 +1137,8 @@ def analysis_tab():
     )
 
     st.subheader("📊 Full race rankings & bookmaker odds")
-    st.dataframe(
-        display_df,
-        hide_index=True,
-        use_container_width=True
-    )
-
-    v061s_feature_audit_ui.render_analysis_explanations(analysis['race_data'], df)
+    # v0.6.1t: one consolidated full-field table; Why? is inside each row.
+    v061t_missing_data_ui.render_ranking_table(display_df, analysis['race_data'])
 
     with st.expander("Compare all bookmakers"):
         comparison = []
@@ -1696,6 +1692,8 @@ with t5:
     v061q_stayer_validation.render(secret)
     st.divider()
     v061s_feature_audit_ui.render_feature_audit(secret)
+    st.divider()
+    v061t_missing_data_ui.render_data_audit(secret)
     st.divider()
     v061r_class_validation.render(secret)
     st.divider()
