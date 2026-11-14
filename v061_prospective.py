@@ -718,7 +718,65 @@ def prospective_dashboard(report):
 
 
 
-def render_track_performance(secret, bets=None):
+def historical_saved_prediction_track_metrics(predictions, result_rows, prospective_race_keys,
+                                              in_window, selected_track):
+    """Legacy earliest saved batches only; exclude prospective races, never backfill archives."""
+    from v045_result_lookup import result_index
+    from v042_results import earliest_batch
+    grouped = defaultdict(list)
+    for p in predictions:
+        try:
+            key = (str(p['race_date'])[:10], str(p['track']), int(p['race_number']))
+        except (KeyError, ValueError, TypeError):
+            continue
+        if in_window(key[0]) and (selected_track == 'All tracks' or key[1] == selected_track):
+            grouped[key].append(p)
+    index = result_index(result_rows)
+    rows, skipped = [], defaultdict(int)
+    for key, records in grouped.items():
+        normalized_key = (key[0], normalize_track(key[1]), key[2])
+        if normalized_key in prospective_race_keys:
+            skipped['already_in_prospective'] += 1
+            continue
+        try:
+            batch_id, selected = earliest_batch(records, key)
+            selected = sorted(selected, key=lambda x: int(x['model_rank']))
+            ranks = [int(x['model_rank']) for x in selected]
+            if ranks != list(range(1, len(selected)+1)):
+                skipped['invalid_rank_sequence'] += 1
+                continue
+            result_matches = [r for (day, track, race, horse), vals in index.items()
+                              if (day, track, race) == normalized_key for r in vals]
+            if not result_matches or any(r.get('result_status') != 'final' for r in result_matches):
+                skipped['missing_final_results'] += 1
+                continue
+            result_horses = [canonical(x.get('horse_key') or x.get('horse')) for x in result_matches]
+            if len(result_horses) != len(set(result_horses)):
+                skipped['duplicate_result_horse'] += 1
+                continue
+            winners = [x for x in result_matches
+                       if not x.get('scratched') and x.get('finishing_position') == 1]
+            if len(winners) != 1:
+                skipped['invalid_winner'] += 1
+                continue
+            starters = {canonical(x.get('horse_key') or x.get('horse')) for x in result_matches
+                        if not x.get('scratched')}
+            predicted = {canonical(x['horse']) for x in selected}
+            if not starters.issubset(predicted):
+                skipped['incomplete_field'] += 1
+                continue
+            winner = canonical(winners[0].get('horse_key') or winners[0].get('horse'))
+            rank_by_horse = {canonical(x['horse']): int(x['model_rank']) for x in selected}
+            rows.append({'track': key[1], 'race_date': key[0], 'race_number': key[2],
+                         'batch_id': batch_id, 'field_size': len(starters),
+                         'top1_won': int(rank_by_horse.get(winner) == 1),
+                         'top3_hit': int(rank_by_horse.get(winner, 999) <= 3)})
+        except (KeyError, ValueError, TypeError):
+            skipped['invalid_saved_batch'] += 1
+    return pd.DataFrame(rows), dict(skipped)
+
+
+def render_track_performance(secret, bets=None, predictions=None):
     """Read-only production track view: actual settled bets vs model simulation."""
     from zoneinfo import ZoneInfo
     st.subheader('🏇 Performance by track — actual vs simulated')
@@ -824,6 +882,35 @@ def render_track_performance(secret, bets=None):
                        file_name='v061w_model_track_filtered.csv',
                        mime='text/csv', key='v061w_prod_track_csv')
 
+    st.markdown('**EARLIER SAVED PREDICTIONS — separate legacy evidence**')
+    st.caption('Earliest saved prediction batch per race, matched to complete final runner results. '
+               'Not independently certified prospective snapshots. No simulated ROI is inferred.')
+    prospective_keys = {(str(x.get('race_date'))[:10],
+                         normalize_track(str(x.get('track'))),
+                         int(x.get('race_number')))
+                        for x in archives if x.get('race_number') is not None}
+    try:
+        legacy_rows, skipped = historical_saved_prediction_track_metrics(
+            predictions or [], results, prospective_keys, in_window, selected_track)
+        if legacy_rows.empty:
+            st.info('No eligible earlier saved predictions with complete final results for this selection.')
+        else:
+            legacy_group = (legacy_rows.groupby('track')
+                            .agg(evaluated_races=('batch_id', 'count'),
+                                 top1_winners=('top1_won', 'sum'),
+                                 top3_hits=('top3_hit', 'sum')).reset_index())
+            legacy_group['top1_win_pct'] = 100 * legacy_group['top1_winners'] / legacy_group['evaluated_races']
+            legacy_group['top3_hit_pct'] = 100 * legacy_group['top3_hits'] / legacy_group['evaluated_races']
+            st.dataframe(legacy_group, hide_index=True, use_container_width=True)
+            st.download_button('Download earlier saved prediction metrics',
+                               legacy_group.to_csv(index=False).encode('utf-8'),
+                               file_name='v061w_legacy_track_metrics.csv', mime='text/csv',
+                               key='v061w_legacy_track_csv')
+        if skipped:
+            st.caption('Legacy races excluded from metrics: ' +
+                       ', '.join(f'{k}: {v}' for k, v in sorted(skipped.items())))
+    except Exception as exc:
+        st.warning('Earlier saved prediction evaluation unavailable: ' + str(exc))
     st.markdown('**ACTUAL — your settled bets by track**')
     from v058_promotions import cash_stake, cash_profit
     settled = [x for x in (bets or []) if x.get('status') == 'Settled'
