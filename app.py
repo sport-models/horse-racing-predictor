@@ -983,6 +983,7 @@ def performance_tab():
             ranks['P/L'] = ranks['Returns'] - ranks['Stake']
             ranks['ROI %'] = ranks.apply(lambda x: 100*x['P/L']/x['Stake'] if x['Stake'] else 0, axis=1)
             st.dataframe(ranks, hide_index=True, use_container_width=True)
+    v061_prospective.render_track_performance(secret)
     st.subheader('📥 Backup exports')
     for name, data in [('bets', bets), ('race_predictions', predictions), ('race_results', results), ('bet_audit_log', audits)]:
         st.download_button(f'Download {name}.csv', data=pd.DataFrame(data).to_csv(index=False).encode('utf-8'),
