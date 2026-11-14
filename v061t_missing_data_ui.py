@@ -107,11 +107,14 @@ def render_ranking_table(frame, form):
     headers=['#','Horse','Score','Sportsbet win','Sportsbet place','Best win / book','Best place / book','Explain']
     cells=st.columns(widths,vertical_alignment='center')
     for col,label in zip(cells,headers): col.markdown('**'+label+'**')
-    for d,record in zip(frame.to_dict('records'),details):
-        col=st.columns(widths,vertical_alignment='center')
-        col[0].write(str(record['Rank']))
-        col[1].write(str(record['Horse']))
-        col[2].write('—' if record['score'] is None else f"{record['score']:.2f}")
+    for d, record in zip(frame.to_dict('records'), details):
+        col = st.columns(widths, vertical_alignment='center')
+        col[0].write(str(record['rank']))
+        col[1].write(str(record['horse']))
+        col[2].write(
+            '—' if record['score'] is None
+            else f"{record['score']:.2f}"
+        )
         col[3].write(_odds(record.get('Sportsbet Win')))
         col[4].write(_odds(record.get('Sportsbet Place')))
         win=_odds(record.get('Best Win'));win_book=record.get('Best Win Book')
