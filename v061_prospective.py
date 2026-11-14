@@ -630,6 +630,81 @@ def audit_locked_prediction_rows(archives, legacy_rows):
 
 
 
+
+def prospective_dashboard(report):
+    """Read-only research dashboard; only archived quotes and saved final results."""
+    races = report['races']
+    evaluated = races[races['status'].eq('EVALUABLE_PROVISIONAL')].copy()
+    st.subheader('📊 v0.6.1w — Prospective Performance Dashboard')
+    st.caption('Provisional scheduled-start evidence only. No live betting advice, no model '
+               'promotion, no retrospective selection substitutions.')
+    total = len(races)
+    paired = report['market_paired']
+    cols = st.columns(4)
+    cols[0].metric('Archived races', total)
+    cols[1].metric('Evaluable results', len(evaluated))
+    cols[2].metric('Top-ranked winners', f"{int(evaluated['top1_won'].sum())}/{len(evaluated)}" if len(evaluated) else '—')
+    cols[3].metric('Paired market races', len(paired))
+    st.progress(min(total / 200, 1.0), text=f'{total} / 200 archived races (collection target, not a promotion threshold)')
+    if evaluated.empty:
+        st.info('No complete, eligible results yet. Results are never inferred from odds.')
+        return
+    st.write('**Provisional model accuracy**')
+    st.dataframe(pd.DataFrame([{
+        'evaluated_races': len(evaluated),
+        'top1_win_rate': float(evaluated['top1_won'].mean()),
+        'top3_hit_rate': float(evaluated['top3_hit'].mean()),
+        'random_top1_expected_wins': float(evaluated['random_top1_expected'].sum()),
+        'actual_top1_wins': int(evaluated['top1_won'].sum()),
+    }]), hide_index=True, use_container_width=True)
+    by_track = (evaluated.groupby('track', dropna=False)
+                .agg(races=('batch_id', 'count'), top1_wins=('top1_won', 'sum'),
+                     top3_hits=('top3_hit', 'sum')).reset_index())
+    by_track['top1_rate'] = by_track['top1_wins'] / by_track['races']
+    st.write('**Performance by track (small samples may be misleading)**')
+    st.dataframe(by_track.sort_values('races', ascending=False),
+                 hide_index=True, use_container_width=True)
+    if not paired.empty:
+        st.write('**Model vs market favourite — same eligible paired races**')
+        st.dataframe(pd.DataFrame([{
+            'paired_races': len(paired),
+            'model_top1_wins': int(paired['top1_won'].sum()),
+            'market_favourite_wins': int(paired['market_favourite_won'].sum()),
+            'same_selection_count': int(paired['model_vs_market_same_horse'].sum()),
+        }]), hide_index=True, use_container_width=True)
+    runners = report['runner_audit']
+    if not runners.empty:
+        # Original rank #1 only. Never replace a scratched pick after the fact.
+        picks = runners[runners['saved_rank'].eq(1)].copy()
+        picks = picks[picks['batch_id'].isin(set(evaluated['batch_id']))]
+        picks = picks[~picks['selection_is_retroactive_if_top1_scratched'].eq(True)]
+        odds = pd.to_numeric(picks['market_win_odds'], errors='coerce')
+        picks = picks[odds.gt(1)].copy()
+        if not picks.empty:
+            picks['win_odds_at_lock'] = pd.to_numeric(picks['market_win_odds'])
+            picks['hypothetical_profit_1u'] = picks['won'].astype(float) * picks['win_odds_at_lock'] - 1.0
+            st.write('**Hypothetical flat-stake win-only return (1 unit per race)**')
+            st.caption('Only original rank-1 selections with eligible, archived paired-bookmaker odds. '
+                       'No place bets, commissions, deductions or transaction costs included.')
+            st.dataframe(pd.DataFrame([{
+                'eligible_bets': len(picks),
+                'staked_units': len(picks),
+                'profit_units': float(picks['hypothetical_profit_1u'].sum()),
+                'roi': float(picks['hypothetical_profit_1u'].mean()),
+            }]), hide_index=True, use_container_width=True)
+            st.download_button('Download provisional flat-stake simulation',
+                               picks.to_csv(index=False).encode('utf-8'),
+                               file_name='v061w_flat_stake_simulation.csv',
+                               mime='text/csv', key='v061w_sim_csv')
+    st.write('**Data quality and unresolved evidence**')
+    counts = (report['missing_evidence'].groupby('reason').size()
+              .reset_index(name='race_flags').sort_values('race_flags', ascending=False))
+    st.dataframe(counts, hide_index=True, use_container_width=True)
+    st.warning('PROMOTION GATE CLOSED: independent actual-off time and form input-as-of '
+               'provenance are not certified. Results remain research-only.')
+
+
+
 def render(secret):
     st.subheader('🔐 v0.6.1 — Prospective Prediction Validation')
     st.caption('New immutable, at-lock source captures only. Historical 1,040 and old 18 races are NOT backfilled. '
@@ -672,6 +747,7 @@ def render(secret):
             st.error('Read-only evaluation failed: '+str(exc))
             return
         st.dataframe(report['summary'], hide_index=True, use_container_width=True)
+        prospective_dashboard(report)
         st.warning('PROMOTION GATE: CLOSED until independent actual-off time AND input point-in-time evidence '
                    'are verified. A scheduled start alone is not official actual-off verification.')
         st.dataframe(report['races'], hide_index=True, use_container_width=True)
