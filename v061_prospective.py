@@ -740,22 +740,37 @@ def render_track_performance(secret, bets=None):
     if not dates:
         st.info('No archived races or recorded bets.')
         return
-    today = utc_now().astimezone(ZoneInfo(DATE_ZONE)).date().isoformat()
-    choice = st.radio('Meeting date', ['All dates', 'Today', 'Select date'],
+    today = utc_now().astimezone(ZoneInfo(DATE_ZONE)).date()
+    choice = st.radio('Meeting dates', ['All dates', 'Today', 'Date range'],
                       horizontal=True, key='v061w_track_date_mode')
-    selected = None
+    start_date, end_date = None, None
     if choice == 'Today':
-        selected = today
-    elif choice == 'Select date':
-        selected = st.selectbox('Choose meeting date', dates[::-1],
-                                key='v061w_track_selected_date')
-    if selected:
-        races = races[races['race_date'].astype(str).str[:10].eq(selected)].copy()
+        start_date = end_date = today.isoformat()
+    elif choice == 'Date range':
+        from datetime import date as date_type
+        default_end = min(today, date_type.fromisoformat(dates[-1]))
+        default_start = date_type.fromisoformat(dates[0])
+        selected_range = st.date_input(
+            'Choose start and end dates', value=(default_start, default_end),
+            key='v061w_track_date_range')
+        if not isinstance(selected_range, (tuple, list)) or len(selected_range) != 2:
+            st.info('Select both the start and end date to display results.')
+            return
+        start_date, end_date = (selected_range[0].isoformat(),
+                                selected_range[1].isoformat())
+        if start_date > end_date:
+            st.error('Start date must not be after end date.')
+            return
+    def in_window(value):
+        day = str(value or '')[:10]
+        return bool(day) and (start_date is None or start_date <= day <= end_date)
+    if start_date is not None:
+        races = races[races['race_date'].map(in_window)].copy()
     tracks = sorted(set(races['track'].dropna().astype(str)))
     if bets:
         tracks = sorted(set(tracks) | set(str(x.get('track')) for x in bets
                                           if x.get('track') and
-                                          (not selected or str(x.get('race_date'))[:10] == selected)))
+                                          in_window(x.get('race_date'))))
     selected_track = st.selectbox('Racecourse', ['All tracks'] + tracks,
                                   key='v061w_track_filter')
     if selected_track != 'All tracks':
@@ -807,7 +822,7 @@ def render_track_performance(secret, bets=None):
     st.markdown('**ACTUAL — your settled bets by track**')
     from v058_promotions import cash_stake, cash_profit
     settled = [x for x in (bets or []) if x.get('status') == 'Settled'
-               and (not selected or str(x.get('race_date'))[:10] == selected)
+               and in_window(x.get('race_date'))
                and (selected_track == 'All tracks' or str(x.get('track')) == selected_track)]
     actual_rows = []
     for bet in settled:
