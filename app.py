@@ -18,6 +18,7 @@ import v057g_each_way_benchmark
 # v0.5.8 PROMO & FIELD SIZE INSTALLED
 import v061b_historical
 import v061_prospective
+import v061v_bulk_capture
 import v060_validation_hub
 import v059_score_separation
 import v058_field_size
@@ -982,6 +983,7 @@ def performance_tab():
             ranks['P/L'] = ranks['Returns'] - ranks['Stake']
             ranks['ROI %'] = ranks.apply(lambda x: 100*x['P/L']/x['Stake'] if x['Stake'] else 0, axis=1)
             st.dataframe(ranks, hide_index=True, use_container_width=True)
+    v061_prospective.render_track_performance(secret)
     st.subheader('📥 Backup exports')
     for name, data in [('bets', bets), ('race_predictions', predictions), ('race_results', results), ('bet_audit_log', audits)]:
         st.download_button(f'Download {name}.csv', data=pd.DataFrame(data).to_csv(index=False).encode('utf-8'),
@@ -1016,16 +1018,27 @@ def analysis_tab():
             for m in meetings if isinstance(m, dict)]), hide_index=True)
         with st.expander('Raw API response'):
             st.json(meetings_data)
+    scope = st.radio('Racecourse coverage', ['All Australian thoroughbred meetings', 'Original Victorian tracks'], horizontal=True, key='racecourse_scope')
     filtered = [m for m in meetings if isinstance(m, dict) and meeting_country(m) in ('au','aus','australia')
-                and any(norm_track(meeting_name(m)) == t or norm_track(meeting_name(m)).startswith(t + ' ') for t in TARGET_TRACKS)]
+                and (scope == 'All Australian thoroughbred meetings' or any(norm_track(meeting_name(m)) == t or norm_track(meeting_name(m)).startswith(t + ' ') for t in TARGET_TRACKS))]
     if not filtered:
-        st.warning('No selected Victorian racecourses returned for this date. Check API Meeting Diagnostics for venues returned by FormFav. Your saved bets and results remain accessible in the other tabs.')
+        st.warning('No eligible Australian thoroughbred meetings returned for this date. Check API Meeting Diagnostics for venues returned by FormFav. Your saved bets and results remain accessible in the other tabs.')
         return
     meeting = st.selectbox('Select Racecourse', filtered, format_func=meeting_name)
     races = get_items(meeting, 'races')
     if not races:
         st.warning('No races returned for this meeting.')
         return
+    v061v_bulk_capture.render(
+        meeting, races, selected_date.isoformat(),
+        api_key=api_key, puntersedge_key=secret('PUNTERSEDGE_API_KEY'),
+        db_client=v061_prospective.archive_client(secret),
+        get_value=get_value, meeting_name=meeting_name,
+        score_runner=score_runner, recent_form_score=recent_form_score,
+        win_rate=win_rate, as_number=as_number,
+        odds_find_race=odds_find_race, odds_runner_quotes=odds_runner_quotes,
+        puntersedge_request=puntersedge_request, get_items=get_items,
+        snapshot_race=snapshot_race)
     race = st.selectbox('Select Race', races, format_func=race_label)
     track_slug = get_value(meeting, 'slug', 'trackSlug', default=meeting_name(meeting).lower().replace(' ', '-'))
     race_number = get_value(race, 'raceNumber', 'number')
@@ -1091,6 +1104,44 @@ def analysis_tab():
                 analysis["race_number"]
             )
 
+            # Read-only matching diagnostics; no raw API payload or credentials exposed.
+            with st.expander("🔍 Odds matching diagnostics (development)", expanded=False):
+                events = [e for e in odds_events(odds_payload) if isinstance(e, dict)]
+                target_track = odds_track_name(analysis["track"])
+                target_date = str(analysis["date"])
+                target_number = str(analysis["race_number"])
+                au_horses = [e for e in events if str(e.get("country", "")).upper() == "AU"
+                             and str(e.get("category", "")).lower() == "horse"]
+                venue_matches = [e for e in au_horses if odds_track_name(e.get("venue")) == target_track]
+                number_matches = [e for e in venue_matches if str(e.get("race_number")) == target_number]
+                exact_matches = [e for e in number_matches if odds_race_date(e) == target_date]
+                st.write({
+                    "requested": {"track": analysis["track"], "date": target_date, "race": target_number},
+                    "total_events": len(events),
+                    "au_thoroughbred_events": len(au_horses),
+                    "venue_matches": len(venue_matches),
+                    "venue_and_number_matches": len(number_matches),
+                    "exact_race_matches": len(exact_matches),
+                    "candidate_races": [
+                        {"venue": e.get("venue"), "race_number": e.get("race_number"),
+                         "start_time_utc": e.get("start_time"),
+                         "melbourne_date": odds_race_date(e),
+                         "runners": len(e.get("runners") or [])}
+                        for e in venue_matches[:20]
+                    ],
+                })
+                if len(exact_matches) == 1:
+                    event_runners = [r for r in (exact_matches[0].get("runners") or []) if isinstance(r, dict)]
+                    model_names = [str(h) for h in df["Horse"]]
+                    matched_runners = [r for r in event_runners
+                                       if odds_horse_name(r.get("name")) in {odds_horse_name(h) for h in model_names}]
+                    st.write({
+                        "api_runners": len(event_runners),
+                        "model_runners": len(model_names),
+                        "matched_runner_names": len(matched_runners),
+                        "bookmaker_records_for_matched_runners": sum(len(r.get("bookmakers") or []) for r in matched_runners),
+                        "api_runner_names": [r.get("name") for r in event_runners],
+                    })
             if matched_event is None:
                 st.warning(
                     "No unique matching Australian thoroughbred "
@@ -1518,7 +1569,7 @@ def puntersedge_tab():
                             "country": "AU",
                             "categories": "horse",
                             "include_unresolved": "true",
-                            "date": "2026-11-05"
+                            "date": date.today().isoformat()
                         }
                     )
 
@@ -1569,8 +1620,7 @@ def puntersedge_tab():
                             "country": "AU",
                             "categories": "horse",
                             "include_unresolved": "true",
-                            "venue": "Flemington",
-                            "num_races": 20
+                            "num_races": 100
                         }
                     )
 
