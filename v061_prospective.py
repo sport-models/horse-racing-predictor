@@ -536,6 +536,100 @@ def _read_all(client, table, order=None, descending=False):
         offset += len(rows)
 
 
+
+def audit_locked_prediction_rows(archives, legacy_rows):
+    """Read-only archive inventory, including races with no results yet.
+
+    No result data, fresh odds, or refreshed rankings are used.
+    """
+    legacy_by_batch = defaultdict(list)
+    for row in legacy_rows:
+        legacy_by_batch[str(row.get('prediction_batch_id'))].append(row)
+    summary, detail = [], []
+    seen_races = set()
+    for archive in archives:
+        batch = str(archive.get('batch_id') or '')
+        payload = archive.get('payload') or {}
+        rankings = payload.get('rankings') or []
+        source = payload.get('source_times') or {}
+        odds = payload.get('odds_quotes') or {}
+        saved = legacy_by_batch.get(batch, [])
+        issues = []
+        key = (str(archive.get('race_date')), normalize_track(str(archive.get('track'))),
+               str(archive.get('race_number')))
+        if key in seen_races:
+            issues.append('DUPLICATE_RACE_ARCHIVE')
+        seen_races.add(key)
+        if not rankings:
+            issues.append('NO_ARCHIVED_RANKINGS')
+        if payload.get('model_version') != FROZEN_MODEL or archive.get('model_version') != FROZEN_MODEL:
+            issues.append('MODEL_VERSION_MISMATCH')
+        if payload.get('original_prediction_batch_id') != batch:
+            issues.append('BATCH_ID_MISMATCH')
+        if payload.get('original_prediction_count_verified') != len(rankings):
+            issues.append('ARCHIVED_COUNT_MISMATCH')
+        if len(saved) != len(rankings):
+            issues.append('LEGACY_COUNT_MISMATCH')
+        else:
+            try:
+                validate_saved_batch(saved, rankings)
+            except (ValueError, TypeError, KeyError) as exc:
+                issues.append('LEGACY_RANK_OR_SCORE_MISMATCH')
+        if archive.get('payload_sha256') != digest(payload):
+            issues.append('PAYLOAD_HASH_MISMATCH')
+        if not started_before_schedule(source.get('ranking_generated_utc'),
+                                       archive.get('scheduled_start_utc')):
+            issues.append('RANKING_NOT_BEFORE_SCHEDULE')
+        if not started_before_schedule(archive.get('created_at'),
+                                       archive.get('scheduled_start_utc')):
+            issues.append('ARCHIVE_NOT_BEFORE_SCHEDULE')
+        try:
+            lead_seconds = (iso_timestamp(archive.get('scheduled_start_utc')) -
+                            iso_timestamp(archive.get('created_at'))).total_seconds()
+            if lead_seconds < 300:
+                issues.append('ARCHIVE_LESS_THAN_5_MIN_BEFORE_SCHEDULE')
+        except (TypeError, AttributeError):
+            lead_seconds = None
+            issues.append('MISSING_TIMING_EVIDENCE')
+        rank_keys = [canonical(r.get('horse')) for r in rankings if isinstance(r, dict)]
+        if len(rank_keys) != len(rankings) or not all(rank_keys) or len(rank_keys) != len(set(rank_keys)):
+            issues.append('DUPLICATE_OR_BLANK_RUNNER')
+        if sorted(r.get('rank') for r in rankings if isinstance(r, dict)) != list(range(1, len(rankings)+1)):
+            issues.append('INVALID_RANK_SEQUENCE')
+        summary.append({
+            'batch_id': batch, 'race_date': archive.get('race_date'),
+            'track': archive.get('track'), 'race_number': archive.get('race_number'),
+            'archive_created_at_utc': archive.get('created_at'),
+            'scheduled_start_utc': archive.get('scheduled_start_utc'),
+            'lead_minutes': lead_seconds / 60 if lead_seconds is not None else None,
+            'ranking_generated_utc': source.get('ranking_generated_utc'),
+            'form_response_received_utc': source.get('form_response_received_utc'),
+            'runner_count': len(rankings), 'legacy_runner_count': len(saved),
+            'odds_capture_status': payload.get('bookmaker_capture_status'),
+            'runner_with_any_quotes': sum(bool(odds.get(str(r.get('horse')))) for r in rankings if isinstance(r, dict)),
+            'archive_status': 'PASS_SCHEDULE_ONLY' if not issues else '|'.join(sorted(set(issues))),
+            'actual_off_certified': bool(payload.get('official_actual_off_verified')),
+            'input_asof_certified': bool(payload.get('input_asof_provenance_verified')),
+        })
+        for r in rankings:
+            if not isinstance(r, dict):
+                continue
+            horse = str(r.get('horse') or '')
+            quotes = odds.get(horse) or []
+            detail.append({
+                'batch_id': batch, 'race_date': archive.get('race_date'),
+                'track': archive.get('track'), 'race_number': archive.get('race_number'),
+                'horse': horse, 'locked_rank': r.get('rank'), 'locked_score': r.get('score'),
+                'archive_created_at_utc': archive.get('created_at'),
+                'scheduled_start_utc': archive.get('scheduled_start_utc'),
+                'odds_capture_status': payload.get('bookmaker_capture_status'),
+                'bookmaker_quote_count': len(quotes) if isinstance(quotes, list) else 0,
+                'bookmaker_quotes_at_lock_json': js(quotes),
+            })
+    return pd.DataFrame(summary), pd.DataFrame(detail)
+
+
+
 def render(secret):
     st.subheader('🔐 v0.6.1 — Prospective Prediction Validation')
     st.caption('New immutable, at-lock source captures only. Historical 1,040 and old 18 races are NOT backfilled. '
@@ -552,6 +646,24 @@ def render(secret):
         st.info('No prospective snapshots yet. For an upcoming race, Analyse Race and click '
                 'Save & Lock All Race Predictions. A fresh at-lock archive will be captured.')
         return
+    if st.button('Audit & export ALL locked predictions (read-only)', key='v061_inventory'):
+        try:
+            legacy = _read_all(client, 'race_predictions')
+            inventory, details = audit_locked_prediction_rows(archives, legacy)
+        except Exception as exc:
+            st.error('Read-only locked prediction audit failed: '+str(exc))
+        else:
+            st.caption('Scheduled-start checks only; actual-off and input-as-of remain uncertified. '
+                       'Exports contain only stored at-lock evidence, never refreshed predictions.')
+            st.dataframe(inventory, hide_index=True, use_container_width=True)
+            st.download_button('Download locked race inventory CSV',
+                               inventory.to_csv(index=False).encode('utf-8'),
+                               file_name='v061_locked_race_inventory.csv', mime='text/csv',
+                               key='v061_inventory_csv')
+            st.download_button('Download ALL locked runner predictions CSV',
+                               details.to_csv(index=False).encode('utf-8'),
+                               file_name='v061_locked_runner_predictions.csv', mime='text/csv',
+                               key='v061_detail_csv')
     if st.button('Run v0.6.1 forward evidence audit', key='v061_run'):
         try:
             results = _read_all(client, 'runner_results', order=None)
