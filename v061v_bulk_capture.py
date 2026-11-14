@@ -61,6 +61,9 @@ def run(meeting, races, race_date, *, api_key, puntersedge_key, db_client,
             if (refreshed_schedule is None or
                     datetime.now(timezone.utc) + SAFETY_BUFFER >= min(scheduled, refreshed_schedule)):
                 raise ValueError('Less than 5 minutes to original or refreshed scheduled start after fresh retrieval')
+            # A slow database check or API request must never permit a late write.
+            if datetime.now(timezone.utc) + SAFETY_BUFFER >= min(scheduled, refreshed_schedule):
+                raise ValueError('Less than 5 minutes to scheduled start immediately before save; lock blocked')
             batch = snapshot_race(race_date, track, number,
                                   prepared['rankings_df'],
                                   prepared['bookmaker_quotes'],
