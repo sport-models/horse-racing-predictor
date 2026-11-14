@@ -676,7 +676,7 @@ def prospective_dashboard(report):
     if not runners.empty:
         # Original rank #1 only. Never replace a scratched pick after the fact.
         picks = runners[runners['saved_rank'].eq(1)].copy()
-        picks = picks[picks['batch_id'].isin(set(evaluated['batch_id']))]
+        picks = picks[picks['batch_id'].isin(set(paired['batch_id']))]
         picks = picks[~picks['selection_is_retroactive_if_top1_scratched'].eq(True)]
         odds = pd.to_numeric(picks['market_win_odds'], errors='coerce')
         picks = picks[odds.gt(1)].copy()
@@ -684,7 +684,7 @@ def prospective_dashboard(report):
             picks['win_odds_at_lock'] = pd.to_numeric(picks['market_win_odds'])
             picks['hypothetical_profit_1u'] = picks['won'].astype(float) * picks['win_odds_at_lock'] - 1.0
             st.write('**Hypothetical flat-stake win-only return (1 unit per race)**')
-            st.caption('Only original rank-1 selections with eligible, archived paired-bookmaker odds. '
+            st.caption('Only original rank-1 selections from the SAME eligible paired-market races with archived odds. '
                        'No place bets, commissions, deductions or transaction costs included.')
             st.dataframe(pd.DataFrame([{
                 'eligible_bets': len(picks),
@@ -692,6 +692,18 @@ def prospective_dashboard(report):
                 'profit_units': float(picks['hypothetical_profit_1u'].sum()),
                 'roi': float(picks['hypothetical_profit_1u'].mean()),
             }]), hide_index=True, use_container_width=True)
+            track_roi = (picks.groupby('track', dropna=False)
+                         .agg(bets=('batch_id', 'count'), wins=('won', 'sum'),
+                              profit_units=('hypothetical_profit_1u', 'sum'))
+                         .reset_index())
+            track_roi['roi_pct'] = 100 * track_roi['profit_units'] / track_roi['bets']
+            st.write('**Hypothetical ROI by track — matched market sample only**')
+            st.dataframe(track_roi.sort_values('bets', ascending=False),
+                         hide_index=True, use_container_width=True)
+            st.download_button('Download provisional track ROI CSV',
+                               track_roi.to_csv(index=False).encode('utf-8'),
+                               file_name='v061w_track_roi.csv', mime='text/csv',
+                               key='v061w_track_roi_csv')
             st.download_button('Download provisional flat-stake simulation',
                                picks.to_csv(index=False).encode('utf-8'),
                                file_name='v061w_flat_stake_simulation.csv',
