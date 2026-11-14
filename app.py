@@ -1,3 +1,4 @@
+import v061u_analysis_ui
 import v061t_missing_data_ui
 import v061s_feature_audit_ui
 import v061r_class_validation
@@ -1138,7 +1139,7 @@ def analysis_tab():
 
     st.subheader("📊 Full race rankings & bookmaker odds")
     # v0.6.1t: one consolidated full-field table; Why? is inside each row.
-    v061t_missing_data_ui.render_ranking_table(display_df, analysis['race_data'])
+    v061u_analysis_ui.render(display_df, analysis['race_data'], race_key)
 
     with st.expander("Compare all bookmakers"):
         comparison = []
@@ -1661,7 +1662,7 @@ with t3:
 with t4:
     performance_tab()
 with t5:
-    v043_full_field.render(db_rows)
+    v043_full_field.render(db_rows, secret)
     st.divider()
     v061_prospective.render(secret)
     st.divider()
