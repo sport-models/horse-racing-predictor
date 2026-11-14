@@ -57,8 +57,10 @@ def run(meeting, races, race_date, *, api_key, puntersedge_key, db_client,
                 win_rate=win_rate, as_number=as_number,
                 odds_find_race=odds_find_race, odds_runner_quotes=odds_runner_quotes,
                 puntersedge_request=puntersedge_request)
-            if datetime.now(timezone.utc) + SAFETY_BUFFER >= scheduled:
-                raise ValueError('Less than 5 minutes to scheduled start after fresh retrieval')
+            refreshed_schedule = prospective.iso_timestamp(prepared['scheduled_start_utc'])
+            if (refreshed_schedule is None or
+                    datetime.now(timezone.utc) + SAFETY_BUFFER >= min(scheduled, refreshed_schedule)):
+                raise ValueError('Less than 5 minutes to original or refreshed scheduled start after fresh retrieval')
             batch = snapshot_race(race_date, track, number,
                                   prepared['rankings_df'],
                                   prepared['bookmaker_quotes'],
