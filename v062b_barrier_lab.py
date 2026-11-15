@@ -39,7 +39,7 @@ def _distance(value):
         value = value.get('meters', value.get('metres', value.get('value')))
     if isinstance(value, str):
         import re
-        match = re.fullmatch(r'\\s*(\\d{3,4})(?:\\s*(?:m|metres|meters))?\\s*', value, re.I)
+        match = re.fullmatch(r'\s*(\d{3,4})(?:\s*(?:m|metres|meters))?\s*', value, re.I)
         if not match:
             return None
         value = match.group(1)
