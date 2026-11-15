@@ -39,9 +39,9 @@ def build_historical(batches, features, results):
             issues.append({'batch_id':bid,'issue':'STARTER_COVERAGE_MISMATCH'})
             continue
         # Do not invent a distance: use explicit race-level metadata only.
-        distance=_unique_field(payload,DISTANCE_KEYS,_distance)
-        if distance is None:
-            distance=_unique_field(b,DISTANCE_KEYS,_distance)
+        distance=_unique_field(b.get('source_form_payload'),DISTANCE_KEYS,_distance)
+        # Only archived race-level FormFav metadata is admissible. Results
+        # payload is deliberately not used to infer pre-race race distance.
         race=[]
         for horse, result in starters.items():
             feature=indexed[horse]
