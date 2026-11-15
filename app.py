@@ -1,3 +1,4 @@
+import v045_abandoned
 import v061u_analysis_ui
 import v061t_missing_data_ui
 import v061s_feature_audit_ui
@@ -1737,6 +1738,8 @@ with t3:
     v042_results.render(db_rows, db, secret)
     st.divider()
     v044_bulk_results.render(db_rows, db, secret)
+    st.divider()
+    v045_abandoned.render(db_rows, db)
 with t4:
     performance_tab()
 with t5:
