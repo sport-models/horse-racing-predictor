@@ -129,3 +129,34 @@ def test_segments_do_not_claim_significance_from_three_dates():
         samples.append(race(str(k), date=f'2026-11-{12 + (k % 3):02}'))
     _, summary, _ = analyse(pd.concat(samples), PROSPECTIVE)
     assert (summary.gate == 'INSUFFICIENT_INDEPENDENT_EXPOSURE').all()
+
+
+def test_quality_matching_uses_score_with_barrier_points_removed_not_overall_rank():
+    # A captured rank can be confounded by the scorer's barrier contribution.
+    source = race(ranks=[1, 2, 3, 4, 5, 6])
+    source.loc[1, 'locked_score'] += 20
+    evidence, _, issues = analyse(source, PROSPECTIVE)
+    assert issues.empty
+    assert evidence.loc[1, 'barrier_free_quality_score'] > evidence.loc[0, 'barrier_free_quality_score']
+    assert evidence.loc[1, 'quality_tier'] == 'INSIDE'
+    assert evidence.loc[0, 'quality_tier'] == 'INSIDE'
+
+
+def test_row_permutation_does_not_change_score_conditioned_null():
+    source = race(barriers=[6, 2, 1, 5, 4, 3])
+    one, _, issue_one = analyse(source, PROSPECTIVE)
+    two, _, issue_two = analyse(source.sample(frac=1, random_state=24), PROSPECTIVE)
+    assert issue_one.empty and issue_two.empty
+    left = one.set_index('horse').sort_index()['quality_matched_expected']
+    right = two.set_index('horse').sort_index()['quality_matched_expected']
+    pd.testing.assert_series_equal(left, right)
+
+
+def test_score_ties_across_quality_terciles_are_excluded_from_adjustment():
+    source = race()
+    source.loc[2, 'locked_score'] = (source.loc[1, 'locked_score']
+                                     - 5 * max(0, min(1, 1 - (2-1)/16))
+                                     + 5 * max(0, min(1, 1 - (3-1)/16)))
+    ev, _, issues = analyse(source, PROSPECTIVE)
+    assert 'QUALITY_SCORE_TIE_SPANS_TERCILES' in set(issues.issue)
+    assert ev.quality_matched_expected.isna().all()
