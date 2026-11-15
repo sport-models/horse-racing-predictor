@@ -912,7 +912,8 @@ def render_track_performance(secret, bets=None, predictions=None):
         races = races[races['track'].eq(selected_track)].copy()
     from v061w_track_inventory import (build_locked_inventory, summarise_locked_inventory,
                                       merge_locked_with_evaluated_metrics,
-                                      legacy_only_saved_batches, build_result_join_diagnostics)
+                                      legacy_only_saved_batches, build_result_join_diagnostics,
+                                      result_import_reconciliation)
     locked_inventory = build_locked_inventory(races, archives)
     locked_summary = summarise_locked_inventory(locked_inventory)
     eligible = races[races['status'].eq('EVALUABLE_PROVISIONAL')].copy()
@@ -1007,6 +1008,25 @@ def render_track_performance(secret, bets=None, predictions=None):
                            diagnostics.to_csv(index=False).encode('utf-8'),
                            file_name='v061w_imported_results_matching_audit.csv',
                            mime='text/csv', key='v061w_result_matching_audit_csv')
+    imported_by_race, imported_by_date = result_import_reconciliation(
+        races, results, start_date, end_date)
+    with st.expander('Cross-check imported runner_results race keys and dates'):
+        st.caption('These are the actual stored runner_results records, grouped by '
+                   'race-date/track/race number. A mismatch means the imported '
+                   'result identity does not equal the locked race identity.')
+        if imported_by_race.empty:
+            st.warning('No runner_results rows stored for this selected date window. '
+                       'Review the Bulk Full-Field Results Import final SAVE outcome; '
+                       'fetch/preview alone does not save.')
+        else:
+            st.dataframe(imported_by_race, hide_index=True, use_container_width=True)
+            st.download_button('Download stored results race-key reconciliation',
+                               imported_by_race.to_csv(index=False).encode('utf-8'),
+                               file_name='v061w_results_race_key_reconciliation.csv',
+                               mime='text/csv', key='v061w_result_key_audit_csv')
+        if not imported_by_date.empty:
+            st.write('**Stored runner_results rows by date (most recent first)**')
+            st.dataframe(imported_by_date.head(10), hide_index=True, use_container_width=True)
     st.caption('Only imported final full-field runner_results are eligible for this '
                'model evaluation; historical research imports and manually settled '
                'bet results are separate sources. This read-only audit does not '
