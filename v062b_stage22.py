@@ -9,6 +9,9 @@ import re
 from urllib.parse import urlparse
 import pandas as pd
 from v062b_stage21 import venue_class, venue_key
+# Bind the real archive functions at module import before legacy tests stub sys.modules.
+from v042_results import canonical
+from v061_prospective import _locked_runner_metadata, digest
 
 CLASS_TYPES={'METRO','PROVINCIAL','COUNTRY'}
 MEETING_COLUMNS=['race_date','track','meeting_class','official_source_url',
@@ -62,7 +65,6 @@ def inspect_score_provenance(evidence, raw_index, cohort):
     r=evidence.copy()
     if not {'batch_id','horse','race_date','track','score_present'}.issubset(r.columns):
         raise ValueError('Stage 2.1 starter evidence required')
-    from v061_prospective import canonical
     rows=[]
     for record in r.to_dict('records'):
         key=(str(record['batch_id']),canonical(record['horse']))
@@ -84,7 +86,6 @@ def inspect_score_provenance(evidence, raw_index, cohort):
 
 
 def historical_raw_index(features):
-    from v061_prospective import canonical
     index={}
     duplicate=set()
     for f in features:
@@ -99,7 +100,6 @@ def historical_raw_index(features):
 
 
 def prospective_raw_index(archives):
-    from v061_prospective import canonical,_locked_runner_metadata,digest
     index={}
     issues=[]
     for archive in archives:
