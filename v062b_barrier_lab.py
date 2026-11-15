@@ -37,6 +37,12 @@ def _unique_field(raw, keys, parse):
 def _distance(value):
     if isinstance(value, dict):
         value = value.get('meters', value.get('metres', value.get('value')))
+    if isinstance(value, str):
+        import re
+        match = re.fullmatch(r'\\s*(\\d{3,4})(?:\\s*(?:m|metres|meters))?\\s*', value, re.I)
+        if not match:
+            return None
+        value = match.group(1)
     try:
         n = float(value)
         return int(n) if math.isfinite(n) and n.is_integer() and 600 <= n <= 5000 else None
