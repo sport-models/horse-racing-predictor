@@ -1,7 +1,7 @@
-"""v0.6.2B Stage 2: read-only normalized barrier and rank-conditioned research.
+"""v0.6.2B Stage 2: read-only normalized barrier and barrier-deconfounded score-conditioned research.
 
 Descriptive conditional randomisation NULL, not a model forecast. Conditioning on
-observed winner's frozen rank *tier* uses the outcome to define the comparison
+observed winner's stored barrier-free score *tier* uses the outcome to define the comparison
 stratum. It must NEVER be interpreted as a calibrated pre-race win probability
 or as verified barrier predictive lift. Historical FormFav ranks were retrieved
 after each race; those data are discovery only, not as-of verified evidence.
@@ -54,27 +54,27 @@ def _summarise(rows, segment, label, cohort):
     frame['segment_type'] = label
     frame['segment_value'] = frame[segment].astype(str)
     dims = ['segment_type', 'segment_value', 'draw_zone']
-    frame['matched_starter'] = frame['rank_matched_expected'].notna().astype(int)
+    frame['matched_starter'] = frame['quality_matched_expected'].notna().astype(int)
     frame['matched_win'] = frame['won'] * frame['matched_starter']
-    frame['expected_matched'] = frame['rank_matched_expected'].fillna(0.0)
+    frame['expected_matched'] = frame['quality_matched_expected'].fillna(0.0)
     report = (frame.groupby(dims, dropna=False, sort=True)
               .agg(starters=('won', 'size'), wins=('won', 'sum'),
                    races=('batch_id', 'nunique'), race_dates=('race_date', 'nunique'),
                    uniform_expected_wins=('uniform_expected_win', 'sum'),
-                   rank_matched_starters=('matched_starter', 'sum'),
-                   rank_matched_wins=('matched_win', 'sum'),
-                   rank_matched_expected_wins=('expected_matched', 'sum'))
+                   quality_matched_starters=('matched_starter', 'sum'),
+                   quality_matched_wins=('matched_win', 'sum'),
+                   quality_matched_expected_wins=('expected_matched', 'sum'))
               .reset_index())
     report['win_rate'] = report['wins'] / report['starters']
     report['excess_vs_uniform'] = report['wins'] - report['uniform_expected_wins']
-    report['rank_matched_coverage_pct'] = 100 * report['rank_matched_starters'] / report['starters']
-    report['excess_vs_rank_matched_null'] = (report['rank_matched_wins'] - report['rank_matched_expected_wins'])
-    report.loc[report['rank_matched_starters'].eq(0),
-               ['rank_matched_expected_wins', 'excess_vs_rank_matched_null']] = float('nan')
+    report['quality_matched_coverage_pct'] = 100 * report['quality_matched_starters'] / report['starters']
+    report['excess_vs_quality_matched_null'] = (report['quality_matched_wins'] - report['quality_matched_expected_wins'])
+    report.loc[report['quality_matched_starters'].eq(0),
+               ['quality_matched_expected_wins', 'excess_vs_quality_matched_null']] = float('nan')
     report['cohort'] = cohort
     report['gate'] = report.apply(
         lambda row: ('EXPLORATORY_ONLY_NOT_VALIDATED' if
-                     row.rank_matched_starters >= MIN_STARTERS and row.race_dates >= MIN_RACE_DATES
+                     row.quality_matched_starters >= MIN_STARTERS and row.race_dates >= MIN_RACE_DATES
                      else 'INSUFFICIENT_INDEPENDENT_EXPOSURE'), axis=1)
     return report
 
@@ -82,9 +82,9 @@ def _summarise(rows, segment, label, cohort):
 def analyse(detail: pd.DataFrame, cohort: str):
     """Returns starter evidence, segment summaries and excluded-race diagnostics.
 
-    Quality is only the *original stored model rank*, not starting price,
+    Quality is only the *original stored v0.2 model score after removing its explicit barrier term*, not starting price,
     winning odds, finishing position, or post-result re-ranking. Prospective
-    archive ranks are unchanged; historical ranks are retrospective proxies.
+    archive scores are unchanged; historical scores are retrospective proxies.
     All report strata are computed separately for one explicit cohort.
     """
     if cohort not in ALLOWED:
@@ -104,7 +104,7 @@ def analyse(detail: pd.DataFrame, cohort: str):
                     'SCHEDULE_ONLY_NOT_CERTIFIED')
         if not detail['evidence_status'].eq(expected).all():
             raise ValueError('Unexpected evidence class; historical and prospective data cannot be pooled')
-    rank_field = 'research_rank' if cohort == HISTORICAL else 'locked_rank'
+    score_field = 'research_model_score' if cohort == HISTORICAL else 'locked_score'
     rows, issues = [], []
     for batch_id, g in detail.groupby('batch_id', dropna=False, sort=False):
         r = g.copy()
@@ -136,27 +136,42 @@ def analyse(detail: pd.DataFrame, cohort: str):
         r['field_band'] = _field_band(n)
         r['distance_band'] = r['distance_m'].map(_distance_band)
         r['uniform_expected_win'] = 1 / n
-        r['rank_matched_expected'] = float('nan')
+        r['quality_matched_expected'] = float('nan')
         r['quality_tier'] = None
-        r['rank_source'] = ('HISTORICAL_POST_RACE_RETRIEVED_MODEL_RANK' if cohort == HISTORICAL
-                            else 'IMMUTABLE_PRE_SCHEDULE_LOCKED_MODEL_RANK')
-        # Only quality features generated at original source capture are allowed.
-        # Gaps among ranks are permitted because scratched horses are excluded.
-        if rank_field not in r:
-            issues.append({'batch_id': batch_id, 'issue': 'NO_STORED_MODEL_RANK_COLUMN'})
+        r['barrier_free_quality_score'] = float('nan')
+        r['score_source'] = ('HISTORICAL_POST_RACE_RETRIEVED_MODEL_SCORE' if cohort == HISTORICAL
+                             else 'IMMUTABLE_PRE_SCHEDULE_LOCKED_MODEL_SCORE')
+        # Frozen v0.2 score contains barrier: 0.10 * context,
+        # context=(barrier_score+weight_score)/2, multiplied by 100.
+        # Subtract exactly 5 * barrier_score points to avoid adjusting for
+        # the very effect being studied. No outcome-based score calculation.
+        if score_field not in r:
+            issues.append({'batch_id': batch_id, 'issue': 'NO_STORED_MODEL_SCORE_COLUMN'})
         else:
-            ranks = r[rank_field].map(_int)
-            if (ranks.isna().any() or (ranks < 1).any() or ranks.nunique() != n):
-                issues.append({'batch_id': batch_id, 'issue': 'INVALID_OR_MISSING_STORED_MODEL_RANK'})
+            scores = pd.to_numeric(r[score_field], errors='coerce')
+            barrier_scores = (1 - (barriers - 1) / 16).clip(0, 1)
+            quality = scores - 5.0 * barrier_scores
+            if quality.isna().any() or not quality.map(math.isfinite).all():
+                issues.append({'batch_id': batch_id, 'issue': 'INVALID_OR_MISSING_STORED_MODEL_SCORE'})
             else:
-                # Reorder stored pre-race ranks among actual starters; never
-                # use finishing position to reorder quality.
-                quality_order = ranks.rank(method='first').astype(int)
-                r['quality_tier'] = ((quality_order - .5) / n).map(_zone)
-                winning_tier = r.loc[r['won'].eq(1), 'quality_tier'].iloc[0]
-                in_tier = r['quality_tier'].eq(winning_tier)
-                r.loc[in_tier, 'rank_matched_expected'] = 1 / int(in_tier.sum())
-                r.loc[~in_tier, 'rank_matched_expected'] = 0.0
+                r['barrier_free_quality_score'] = quality
+                # Stable order independent of stored row position.
+                # Ties that span terciles are ambiguous and excluded.
+                order = r.assign(_score=quality, _name=r['horse'].astype(str).str.casefold())
+                order = order.sort_values(['_score','_name'], ascending=[False,True], kind='stable')
+                tier_values = [_zone((i + .5) / n) for i in range(n)]
+                ties_split = any((order['_score'].iloc[i] == order['_score'].iloc[i-1]
+                                  and tier_values[i] != tier_values[i-1])
+                                 for i in range(1, n))
+                if ties_split:
+                    issues.append({'batch_id': batch_id, 'issue': 'QUALITY_SCORE_TIE_SPANS_TERCILES'})
+                else:
+                    tiers = pd.Series(tier_values, index=order.index)
+                    r['quality_tier'] = tiers.reindex(r.index)
+                    winning_tier = r.loc[r['won'].eq(1), 'quality_tier'].iloc[0]
+                    in_tier = r['quality_tier'].eq(winning_tier)
+                    r.loc[in_tier, 'quality_matched_expected'] = 1 / int(in_tier.sum())
+                    r.loc[~in_tier, 'quality_matched_expected'] = 0.0
         rows.append(r)
     if not rows:
         return pd.DataFrame(), pd.DataFrame(), pd.DataFrame(issues, columns=['batch_id', 'issue'])
@@ -175,10 +190,10 @@ def analyse(detail: pd.DataFrame, cohort: str):
 def render(secret):
     """Streamlit on-demand; never writes research rows to Supabase."""
     import streamlit as st
-    st.subheader('🔬 v0.6.2B Stage 2 — Barrier draw / stored-rank comparison')
+    st.subheader('🔬 v0.6.2B Stage 2 — Barrier draw / barrier-free score comparison')
     st.caption('Read-only: field-size-normalised actual starter draw terciles. '
-               'A rank-conditioned permutation null compares winners within the '
-               'same pre-existing rank tercile. This is an association diagnostic, '
+               'A quality-score-conditioned permutation null compares winners within the '
+               'same debarriered v0.2 score tercile. This is an association diagnostic, '
                'NOT calibrated win probabilities or demonstrated predictive lift.')
     source = st.radio('Research cohort (never pooled)',
                       ['Historical discovery (post-race FormFav)',
@@ -213,17 +228,17 @@ def render(secret):
     c1, c2, c3 = st.columns(3)
     c1.metric('Valid starter observations', len(evidence))
     c2.metric('Evaluable races', evidence.batch_id.nunique() if not evidence.empty else 0)
-    c3.metric('Rank-matched starter observations',
-              int(evidence.rank_matched_expected.notna().sum()) if not evidence.empty else 0)
+    c3.metric('Quality-matched starter observations',
+              int(evidence.quality_matched_expected.notna().sum()) if not evidence.empty else 0)
     if not evidence.empty:
-        st.markdown('**Aggregate draw terciles — unadjusted vs rank-matched null**')
+        st.markdown('**Aggregate draw terciles — unadjusted vs quality-matched null**')
         st.dataframe(summary[summary.segment_type.eq('OVERALL')], hide_index=True,
                      use_container_width=True)
         st.markdown('**Segments: field size, distance, venue**')
         st.dataframe(summary[~summary.segment_type.eq('OVERALL')], hide_index=True,
                      use_container_width=True)
     if not issues.empty:
-        st.warning('Some races excluded or lack valid original ranks for quality matching.')
+        st.warning('Some races excluded or lack valid original scores for quality matching.')
         st.dataframe(issues, hide_index=True, use_container_width=True)
     for name, data in [('stage2_starters', evidence), ('stage2_segments', summary),
                        ('stage2_issues', issues)]:
@@ -231,8 +246,8 @@ def render(secret):
                            file_name='v062b_' + name + '_' +
                            ('historical' if cohort == HISTORICAL else 'prospective') + '.csv',
                            mime='text/csv', key='v062b_' + name)
-    st.warning('Not approved for production: historic score/rank inputs were retrieved '
+    st.warning('Not approved for production: historical score inputs were retrieved '
                'AFTER racing; prospective actual-off and provider-as-of timing remain '
-               'uncertified. Rank-matched null conditions on the winner tier and must '
+               'uncertified. Quality-matched null conditions on the winning quality tier and must '
                'not be interpreted as a pre-race forecast. No p-values, betting '
                'recommendations, or feature promotions are produced.')
