@@ -5,7 +5,7 @@ from v062b_historical import build_historical, COHORT
 def test_historical_cohort_separated_and_missing_distance_preserved(monkeypatch):
     import v061b_historical as h
     monkeypatch.setattr(h,'build_reports',lambda b,f,r:{
-        'races':[{'batch_id':'a','status':'EVALUABLE_RETROSPECTIVE_RESEARCH','actual_starters':2}]})
+        'races':pd.DataFrame([{'batch_id':'a','status':'EVALUABLE_RETROSPECTIVE_RESEARCH','actual_starters':2}])})
     monkeypatch.setattr(h,'digest',lambda p:'ok')
     batches=[{'id':'a','race_date':'2026-10-01','track':'Seymour','race_number':1}]
     features=[{'batch_id':'a','horse':'A','horse_key':'a','barrier':1},
