@@ -85,9 +85,6 @@ def render(db_rows, db):
                 selected,url,note,archived,finished,already)
             # Race-level recheck at write time: do not overwrite final placings.
             db_client=db()
-            any_results=(db_client.table('runner_results').select('id')
-                         .eq('race_date',record['race_date'])
-                         .eq('race_number',record['race_number']).execute().data or [])
             if any(normalize_track(row.get('track'))==record['track_key']
                    for row in db_rows('runner_results',
                                       columns='race_date,track,race_number',
