@@ -910,13 +910,18 @@ def render_track_performance(secret, bets=None, predictions=None):
                                   key='v061w_track_filter')
     if selected_track != 'All tracks':
         races = races[races['track'].eq(selected_track)].copy()
+    from v061w_track_inventory import build_locked_inventory, summarise_locked_inventory
+    locked_inventory = build_locked_inventory(races, archives)
+    locked_summary = summarise_locked_inventory(locked_inventory)
     eligible = races[races['status'].eq('EVALUABLE_PROVISIONAL')].copy()
     paired = report['market_paired']
     paired = paired[paired['batch_id'].isin(set(eligible['batch_id']))].copy()
-    columns = ['track', 'evaluated_races', 'top1_winners', 'top1_win_pct',
-               'top3_hit_pct', 'paired_races', 'model_wins_paired',
-               'favourite_wins_paired', 'simulated_bets', 'simulated_profit_units',
-               'simulated_roi_pct']
+    performance_columns = ['track', 'evaluated_races', 'top1_winners', 'top1_win_pct',
+                           'top3_hit_pct', 'paired_races', 'model_wins_paired',
+                           'favourite_wins_paired', 'simulated_bets', 'simulated_profit_units',
+                           'simulated_roi_pct']
+    columns = ['track', 'archived_races', 'awaiting_results', 'review_required',
+               'evaluated_races'] + performance_columns[2:]
     if not eligible.empty:
         grouped = (eligible.groupby('track', dropna=False)
                    .agg(evaluated_races=('batch_id', 'count'),
@@ -944,20 +949,39 @@ def render_track_performance(secret, bets=None, predictions=None):
                             simulated_profit_units=('profit_units', 'sum')).reset_index())
                 sim['simulated_roi_pct'] = 100 * sim['simulated_profit_units'] / sim['simulated_bets']
                 grouped = grouped.merge(sim, on='track', how='left')
-        grouped = grouped.reindex(columns=columns)
+        grouped = grouped.reindex(columns=performance_columns)
+    else:
+        grouped = pd.DataFrame(columns=performance_columns)
+    # Keep all successfully archived races visible, even before final results.
+    # Winner rates, market comparisons and simulated ROI still come exclusively
+    # from EVALUABLE_PROVISIONAL races; blank metrics are NOT zero returns.
+    if not locked_summary.empty:
+        grouped = locked_summary.merge(
+            grouped.drop(columns=['evaluated_races'], errors='ignore'),
+            on='track', how='left', validate='one_to_one').reindex(columns=columns)
     else:
         grouped = pd.DataFrame(columns=columns)
-    if eligible.empty:
-        st.info('No evaluable v0.6.1 prospective archives in this date range. '
-                'Earlier saved predictions (including possible Flemington meetings) '
-                'are not automatically part of the v0.6.1 prospective archive. '
-                'Your actual settled bets, if any, are shown separately below.')
     st.markdown('**MODEL — prospective predictions (not actual bets)**')
+    st.caption('All successfully archived locks appear here, whether or not a bet was placed. '
+               'Accuracy and simulated returns appear only after complete final results are evaluated. '
+               'Today filters by race date in Melbourne; races not yet bulk-finalised do not appear.')
+    if races.empty:
+        st.info('No prospective races were archived for the selected date and track. '
+                'Check that the meeting bulk-lock report says ARCHIVED, not FAILED, SKIPPED or UNVERIFIED.')
+    elif eligible.empty:
+        st.info(f'{len(locked_inventory)} prospective races archived for this selection; '
+                'none have fully evaluated results yet. The archived predictions appear below.')
     st.dataframe(grouped, hide_index=True, use_container_width=True)
     st.download_button('Download filtered model track CSV',
                        grouped.to_csv(index=False).encode('utf-8'),
                        file_name='v061w_model_track_filtered.csv',
                        mime='text/csv', key='v061w_prod_track_csv')
+    st.markdown('**LOCKED PROSPECTIVE RACES — including results pending**')
+    st.dataframe(locked_inventory, hide_index=True, use_container_width=True)
+    st.download_button('Download filtered locked race inventory',
+                       locked_inventory.to_csv(index=False).encode('utf-8'),
+                       file_name='v061w_locked_race_inventory_filtered.csv',
+                       mime='text/csv', key='v061w_prod_locked_inventory_csv')
 
     st.markdown('**EARLIER SAVED PREDICTIONS — separate legacy evidence**')
     st.caption('Earliest saved prediction batch per race, matched to complete final runner results. '
