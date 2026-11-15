@@ -95,6 +95,7 @@ def render(secret):
         detail,summary,issues,races=build_historical(batches,features,results)
     except Exception as exc:
         st.error('Historical read-only audit failed: '+str(exc))
+        st.exception(exc)
         return
     st.metric('Historical archive races',len(batches))
     st.metric('Complete barrier starter observations',len(detail))
