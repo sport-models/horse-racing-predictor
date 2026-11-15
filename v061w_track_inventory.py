@@ -128,3 +128,33 @@ def merge_locked_with_evaluated_metrics(locked_summary, evaluated_metrics, colum
     return (locked_summary.merge(metrics, on="track", how="left",
                                  validate="one_to_one")
             .reindex(columns=columns))
+
+
+LEGACY_ONLY_COLUMNS = ["race_date", "track", "race_number",
+                       "prediction_batch_id", "saved_runner_rows"]
+
+
+def legacy_only_saved_batches(predictions, archives, in_window, selected_track):
+    """Show saved legacy batches lacking a matching v0.6.1 evidence archive.
+
+    These might be earlier manual saves or partial bulk locks; do not relabel
+    them as prospective evidence, evaluated predictions, or lost bets.
+    """
+    archived_ids = {str(a.get("batch_id")) for a in (archives or [])}
+    count_by_key = {}
+    for row in predictions or []:
+        batch = str(row.get("prediction_batch_id") or "")
+        date = str(row.get("race_date") or "")[:10]
+        track = str(row.get("track") or "")
+        if (not batch or batch in archived_ids or not in_window(date) or
+                (selected_track != "All tracks" and track != selected_track)):
+            continue
+        key = (date, track, row.get("race_number"), batch)
+        count_by_key[key] = count_by_key.get(key, 0) + 1
+    data = [{
+        "race_date": date, "track": track, "race_number": race_num,
+        "prediction_batch_id": batch, "saved_runner_rows": count,
+    } for (date, track, race_num, batch), count in count_by_key.items()]
+    return (pd.DataFrame(data, columns=LEGACY_ONLY_COLUMNS)
+            .sort_values(["race_date", "track", "race_number"], kind="stable")
+            .reset_index(drop=True))
