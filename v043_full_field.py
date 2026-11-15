@@ -85,11 +85,15 @@ def render(db_rows, secret):
         starters = [r for r in official if r.get('scratched') is False]
         winners = [r for r in starters if pd.to_numeric(r.get('finishing_position'), errors='coerce') == 1]
         matched = sum(norm(r.get('horse')) in preds for r in starters)
-        valid = (not duplicate_predictions and not duplicate_results and len(winners) == 1 and
+        # Two distinct official joint-first finishers are a valid dead heat;
+        # never arbitrarily choose one as the sole winner.
+        valid = (not duplicate_predictions and not duplicate_results and len(winners) in (1, 2) and
                  len(starters) > 0 and all(pd.notna(pd.to_numeric(r.get('finishing_position'), errors='coerce')) for r in starters))
         top = [r for r in starters if norm(r.get('horse')) in preds and pd.to_numeric(preds[norm(r.get('horse'))].get('model_rank'), errors='coerce') == 1]
-        winner_rank = (pd.to_numeric(preds[norm(winners[0]['horse'])].get('model_rank'), errors='coerce')
-                       if winners and norm(winners[0]['horse']) in preds else None)
+        winning_ranks = [pd.to_numeric(preds[norm(w['horse'])].get('model_rank'), errors='coerce')
+                         for w in winners if norm(w['horse']) in preds]
+        winning_ranks = [x for x in winning_ranks if pd.notna(x)]
+        winner_rank = min(winning_ranks) if winning_ranks else None
         top_finish = pd.to_numeric(top[0].get('finishing_position'), errors='coerce') if len(top) == 1 else None
         complete = matched == len(starters) and valid
         evidence = proof_for_batch(batch, selected, archive_index)
@@ -100,7 +104,9 @@ def render(db_rows, secret):
                         'Predicted starters': matched, 'Coverage %': round(100 * matched / len(starters), 1) if starters else None,
                         'Complete field': complete, 'Data valid': valid,
                         'Top pick': top[0]['horse'] if len(top) == 1 else None,
-                        'Top pick finish': top_finish, 'Winner': winners[0]['horse'] if len(winners) == 1 else None,
+                        'Top pick finish': top_finish, 'Winner': ' / '.join(str(w['horse']) for w in winners)
+                        if valid else None,
+                        'Joint-first count': len(winners) if valid else None,
                         'Winner model rank': winner_rank,
                         'Top 3 covered': bool(winner_rank <= 3) if pd.notna(winner_rank) else None})
         for r in official:
@@ -117,7 +123,7 @@ def render(db_rows, secret):
         return
     s = pd.DataFrame(summary)
     st.write(f'**{len(s)} imported race(s) matched to locked prediction batches.**')
-    st.warning('Pre-race timing is not independently proven for same-day locks. Race-level metrics below are descriptive; incomplete fields and invalid races are excluded from the strict baseline.')
+    st.warning('Pre-race timing is not independently proven for same-day locks. Race-level metrics below are descriptive; incomplete fields and invalid races are excluded from the strict baseline. Two-way official dead heats are shown as two joint-first winners; any matching top-ranked prediction counts as a hit.')
     strict = s[(s['Complete field']) & (s['Data valid']) & (s['Timing'] == 'PRIOR_DAY')]
     c1, c2, c3, c4 = st.columns(4)
     c1.metric('Imported matched races', len(s))
