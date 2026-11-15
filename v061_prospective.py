@@ -910,7 +910,8 @@ def render_track_performance(secret, bets=None, predictions=None):
                                   key='v061w_track_filter')
     if selected_track != 'All tracks':
         races = races[races['track'].eq(selected_track)].copy()
-    from v061w_track_inventory import build_locked_inventory, summarise_locked_inventory
+    from v061w_track_inventory import (build_locked_inventory, summarise_locked_inventory,
+                                      merge_locked_with_evaluated_metrics)
     locked_inventory = build_locked_inventory(races, archives)
     locked_summary = summarise_locked_inventory(locked_inventory)
     eligible = races[races['status'].eq('EVALUABLE_PROVISIONAL')].copy()
@@ -955,12 +956,7 @@ def render_track_performance(secret, bets=None, predictions=None):
     # Keep all successfully archived races visible, even before final results.
     # Winner rates, market comparisons and simulated ROI still come exclusively
     # from EVALUABLE_PROVISIONAL races; blank metrics are NOT zero returns.
-    if not locked_summary.empty:
-        grouped = locked_summary.merge(
-            grouped.drop(columns=['evaluated_races'], errors='ignore'),
-            on='track', how='left', validate='one_to_one').reindex(columns=columns)
-    else:
-        grouped = pd.DataFrame(columns=columns)
+    grouped = merge_locked_with_evaluated_metrics(locked_summary, grouped, columns)
     st.markdown('**MODEL — prospective predictions (not actual bets)**')
     st.caption('All successfully archived locks appear here, whether or not a bet was placed. '
                'Accuracy and simulated returns appear only after complete final results are evaluated. '
