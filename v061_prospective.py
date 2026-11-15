@@ -847,7 +847,7 @@ def historical_saved_prediction_track_metrics(predictions, result_rows, prospect
                 continue
             winners = [x for x in result_matches
                        if not x.get('scratched') and str(x.get('finishing_position')) == '1']
-            if len(winners) != 1:
+            if len(winners) not in (1, 2):
                 skipped['invalid_winner'] += 1
                 continue
             starters = {canonical(x.get('horse_key') or x.get('horse')) for x in result_matches
@@ -856,12 +856,13 @@ def historical_saved_prediction_track_metrics(predictions, result_rows, prospect
             if not starters.issubset(predicted):
                 skipped['incomplete_field'] += 1
                 continue
-            winner = canonical(winners[0].get('horse_key') or winners[0].get('horse'))
+            joint_winners = {canonical(w.get('horse_key') or w.get('horse')) for w in winners}
             rank_by_horse = {canonical(x['horse']): int(x['model_rank']) for x in selected}
             rows.append({'track': key[1], 'race_date': key[0], 'race_number': key[2],
                          'batch_id': batch_id, 'field_size': len(starters),
-                         'top1_won': int(rank_by_horse.get(winner) == 1),
-                         'top3_hit': int(rank_by_horse.get(winner, 999) <= 3)})
+                         'joint_first_count': len(joint_winners),
+                         'top1_won': int(any(rank_by_horse.get(w) == 1 for w in joint_winners)),
+                         'top3_hit': int(any(rank_by_horse.get(w, 999) <= 3 for w in joint_winners))})
         except (KeyError, ValueError, TypeError):
             skipped['invalid_saved_batch'] += 1
     return pd.DataFrame(rows), dict(skipped)
