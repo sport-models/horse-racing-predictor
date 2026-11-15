@@ -141,6 +141,15 @@ def _runner_scoring_status(score, runner):
                 return 'NULL_SCORE_ZERO_CAREER_STARTS'
         except (TypeError, ValueError):
             pass
+    # An explicitly empty provider form history explains the absence of recent-form
+    # evidence, but does NOT establish that the horse has never raced.
+    # Only use recognised, non-null form fields; do not infer from missing keys.
+    for field in ('form', 'recentForm', 'recent_form'):
+        if field not in runner:
+            continue
+        history = runner[field]
+        if isinstance(history, (list, dict, str)) and not history:
+            return 'NULL_SCORE_NO_RECORDED_RECENT_FORM'
     return 'NULL_SCORE_REASON_UNVERIFIED'
 
 
