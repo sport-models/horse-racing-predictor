@@ -2,7 +2,7 @@ import pandas as pd
 
 from v061w_track_inventory import (
     build_locked_inventory, summarise_locked_inventory, prediction_status,
-    merge_locked_with_evaluated_metrics,
+    merge_locked_with_evaluated_metrics, legacy_only_saved_batches,
 )
 
 
@@ -93,3 +93,25 @@ def test_locked_races_populate_track_model_table_before_results():
     assert output.iloc[0].evaluated_races == 0
     assert pd.isna(output.iloc[0].top1_win_pct)
     assert pd.isna(output.iloc[0].simulated_roi_pct)
+
+
+def test_unarchived_legacy_batches_are_visible_as_diagnostics_only():
+    archives = [_archive("archived", 1)]
+    saved = [
+        {"prediction_batch_id": "archived", "race_date": "2026-11-15",
+         "track": "Moe", "race_number": 1},
+        {"prediction_batch_id": "unverified", "race_date": "2026-11-15",
+         "track": "Moe", "race_number": 2},
+        {"prediction_batch_id": "unverified", "race_date": "2026-11-15",
+         "track": "Moe", "race_number": 2},
+        {"prediction_batch_id": "other_day", "race_date": "2026-11-14",
+         "track": "Moe", "race_number": 3},
+    ]
+    output = legacy_only_saved_batches(
+        saved, archives, lambda date: date == "2026-11-15", "Moe")
+    assert len(output) == 1
+    assert output.iloc[0].prediction_batch_id == "unverified"
+    assert output.iloc[0].saved_runner_rows == 2
+    assert legacy_only_saved_batches(
+        saved, archives, lambda date: date == "2026-11-15",
+        "Geelong").empty
