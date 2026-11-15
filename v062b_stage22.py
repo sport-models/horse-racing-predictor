@@ -9,9 +9,41 @@ import re
 from urllib.parse import urlparse
 import pandas as pd
 from v062b_stage21 import venue_class, venue_key
-# Bind the real archive functions at module import before legacy tests stub sys.modules.
+# Match the core archive hash and runner index without depending on
+# legacy test modules that stub sys.modules['v061_prospective'].
 from v042_results import canonical
-from v061_prospective import _locked_runner_metadata, digest
+from hashlib import sha256
+import json
+
+
+def digest(value):
+    return sha256(json.dumps(value, ensure_ascii=False, sort_keys=True,
+                             separators=(',', ':'), allow_nan=False).encode('utf-8')).hexdigest()
+
+
+def _locked_runner_metadata(form_response):
+    candidates=[]
+    def visit(node):
+        if isinstance(node,dict):
+            for key,value in node.items():
+                if key=='runners' and isinstance(value,list):
+                    candidates.extend(v for v in value if isinstance(v,dict))
+                elif isinstance(value,(dict,list)):
+                    visit(value)
+        elif isinstance(node,list):
+            for item in node:
+                visit(item)
+    visit(form_response)
+    indexed,ambiguous={},set()
+    for runner in candidates:
+        key=canonical(runner.get('name') or runner.get('runnerName') or runner.get('horseName'))
+        if not key:
+            continue
+        if key in indexed:
+            ambiguous.add(key)
+        else:
+            indexed[key]=runner
+    return indexed,ambiguous
 
 CLASS_TYPES={'METRO','PROVINCIAL','COUNTRY'}
 MEETING_COLUMNS=['race_date','track','meeting_class','official_source_url',
