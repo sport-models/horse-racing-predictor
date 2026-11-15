@@ -911,7 +911,8 @@ def render_track_performance(secret, bets=None, predictions=None):
     if selected_track != 'All tracks':
         races = races[races['track'].eq(selected_track)].copy()
     from v061w_track_inventory import (build_locked_inventory, summarise_locked_inventory,
-                                      merge_locked_with_evaluated_metrics)
+                                      merge_locked_with_evaluated_metrics,
+                                      legacy_only_saved_batches)
     locked_inventory = build_locked_inventory(races, archives)
     locked_summary = summarise_locked_inventory(locked_inventory)
     eligible = races[races['status'].eq('EVALUABLE_PROVISIONAL')].copy()
@@ -978,6 +979,19 @@ def render_track_performance(secret, bets=None, predictions=None):
                        locked_inventory.to_csv(index=False).encode('utf-8'),
                        file_name='v061w_locked_race_inventory_filtered.csv',
                        mime='text/csv', key='v061w_prod_locked_inventory_csv')
+    legacy_only = legacy_only_saved_batches(
+        predictions or [], archives, in_window, selected_track)
+    if not legacy_only.empty:
+        st.warning(f'{len(legacy_only)} saved prediction batches in this selection '
+                   'have no matching v0.6.1 prospective archive. These are legacy-only '
+                   'records, not certified bulk locks; check the bulk-lock ARCHIVED status. '
+                   'Older manual saves may also appear here.')
+        with st.expander('View saved legacy batches without prospective archives'):
+            st.dataframe(legacy_only, hide_index=True, use_container_width=True)
+            st.download_button('Download legacy-only batch diagnostic',
+                               legacy_only.to_csv(index=False).encode('utf-8'),
+                               file_name='v061w_legacy_only_without_archive.csv',
+                               mime='text/csv', key='v061w_prod_legacy_only_csv')
 
     st.markdown('**EARLIER SAVED PREDICTIONS — separate legacy evidence**')
     st.caption('Earliest saved prediction batch per race, matched to complete final runner results. '
