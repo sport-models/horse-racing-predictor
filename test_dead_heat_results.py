@@ -155,3 +155,27 @@ def test_zero_winners_in_imported_results_not_evaluable():
     report, issues, _ = evaluate_one(_archive(), _results(winners=()))
     assert report["status"] != "EVALUABLE_PROVISIONAL"
     assert "INVALID_OR_INCOMPLETE_OFFICIAL_RESULTS" in issues
+
+
+def test_bulk_import_preview_keeps_two_joint_winners_with_original_identity(monkeypatch):
+    import v044_bulk_results as bulk
+
+    class Response:
+        def raise_for_status(self):
+            pass
+        def json(self):
+            return _result_payload(_placings(2))
+
+    monkeypatch.setattr(bulk.requests, "get", lambda *args, **kwargs: Response())
+    predictions = [{
+        "race_date": "2026-11-15", "track": "Moe", "race_number": 5,
+        "horse": name, "prediction_batch_id": "original", "predicted_at":
+        "2026-11-14T23:01:00+00:00",
+    } for name in ("Horse A", "Horse B", "Horse C")]
+    fetched = bulk._fetch(("2026-11-15", "Moe", 5), "test-key", predictions)
+    assert fetched["race"] == ("2026-11-15", "Moe", 5)
+    assert fetched["dead_heat_first"] is True
+    assert fetched["joint_winners"] == ["Horse A", "Horse B"]
+    assert fetched["starters"] == 3
+    assert fetched["scratches"] == 1
+    assert sum(x["finishing_position"] == 1 for x in fetched["rows"]) == 2
