@@ -543,6 +543,24 @@ def evaluate_one(archive, results):
     return output, sorted(set(issues)), runner_rows
 
 
+def simulated_win_profit_units(won, odds, joint_first_count):
+    """One-unit hypothetical WIN bet, with standard fractional dead-heat settlement.
+
+    A two-way dead heat pays on half the original stake if the selection
+    is one of the joint winners; the other half loses. Never uses current
+    or starting odds in place of the saved at-lock price. Actual settled
+    bookmaker payouts remain separate.
+    """
+    try:
+        count = int(joint_first_count)
+        price = float(odds)
+    except (ValueError, TypeError, OverflowError) as exc:
+        raise ValueError('Missing or invalid simulated win inputs') from exc
+    if count not in (1, 2) or not math.isfinite(price) or price <= 1:
+        raise ValueError('Invalid winner count or saved win odds')
+    return float(price / count - 1) if won else -1.0
+
+
 def evaluate_archives(archives, runner_results):
     """Return race, runner, market, evidence, summary tables. Never modify DB."""
     results = _result_index(runner_results)
@@ -957,8 +975,10 @@ def render_track_performance(secret, bets=None, predictions=None):
                 # Two-way dead heat: half the original stake wins at captured
                 # odds, half loses; net hypothetical 1u P/L = odds/2 - 1.
                 # Real settled bets remain a separate ledger.
-                picks['profit_units'] = (picks['won'].astype(float) * picks['odds'] /
-                                         picks['joint_first_count'] - 1)
+                picks['profit_units'] = [simulated_win_profit_units(won, price, count)
+                                         for won, price, count in zip(
+                                             picks['won'], picks['odds'],
+                                             picks['joint_first_count'])]
                 sim = (picks.groupby('track', dropna=False)
                        .agg(simulated_bets=('batch_id', 'count'),
                             simulated_profit_units=('profit_units', 'sum')).reset_index())
