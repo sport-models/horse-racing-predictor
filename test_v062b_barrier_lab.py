@@ -19,11 +19,11 @@ def test_distance_requires_valid_unambiguous_metadata():
 def test_exposure_requires_complete_unique_starter_barriers(monkeypatch):
     import v061_prospective as core
     monkeypatch.setattr(core,'evaluate_archives',lambda a,r:{
-        'races':pd.DataFrame([{'batch_id':'a','status':'EVALUABLE_PROVISIONAL','field_size':2}])})
-    monkeypatch.setattr(core,'digest',lambda payload:'verified')
-    monkeypatch.setattr(core,'_locked_runner_metadata',lambda raw:({},set()))
-    monkeypatch.setattr(core,'race_key',lambda row:('race',))
-    monkeypatch.setattr(core,'_result_index',lambda rows:{('race',):rows})
+        'races':pd.DataFrame([{'batch_id':'a','status':'EVALUABLE_PROVISIONAL','field_size':2}])}, raising=False)
+    monkeypatch.setattr(core,'digest',lambda payload:'verified', raising=False)
+    monkeypatch.setattr(core,'_locked_runner_metadata',lambda raw:({},set()), raising=False)
+    monkeypatch.setattr(core,'race_key',lambda row:('race',), raising=False)
+    monkeypatch.setattr(core,'_result_index',lambda rows:{('race',):rows}, raising=False)
     archives=[{'batch_id':'a','payload_sha256':'verified','race_date':'2026-11-15',
                'track':'Seymour','race_number':1,'payload':{
                    'form_response_raw':{'distance':1200},
