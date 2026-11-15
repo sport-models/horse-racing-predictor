@@ -1,6 +1,8 @@
 from datetime import date,timedelta
 import pytest
 from v045_abandoned import validate_manual_abandonment, race_id, melbourne_today
+# Bind real function at collection time before legacy tests stub sys.modules.
+from v061_prospective import evaluate_archives
 
 def _fixture():
     race=('2026-11-15','Donald',5)
@@ -57,7 +59,6 @@ def test_short_attestation_rejected():
 
 
 def test_prospective_abandoned_race_has_no_win_loss_or_roi():
-    from v061_prospective import evaluate_archives
     from test_dead_heat_results import _archive
     archive=_archive()
     marker={'race_date':archive['race_date'],'track':archive['track'],
@@ -77,7 +78,6 @@ def test_prospective_abandoned_race_has_no_win_loss_or_roi():
 
 
 def test_conflict_between_abandoned_race_and_final_results_blocks_metrics():
-    from v061_prospective import evaluate_archives
     from test_dead_heat_results import _archive,_results
     archive=_archive()
     marker={'race_date':archive['race_date'],'track':archive['track'],
