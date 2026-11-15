@@ -1,11 +1,12 @@
 """Regression coverage: genuine two-way official first-place dead heats."""
-from datetime import datetime, timedelta, timezone
 import math
 
 import pytest
 
 from v042_results import parse
 from v061_prospective import digest, evaluate_one, simulated_win_profit_units
+from v044_bulk_results import _fetch as bulk_fetch
+import v044_bulk_results as bulk_import
 
 
 def _placings(first=2):
@@ -98,8 +99,9 @@ def _results(winners=("Horse A", "Horse B")):
 
 
 def test_prospective_joint_winners_pass_integrity_and_preserve_top_pick(monkeypatch):
-    import v061_prospective as p
-    monkeypatch.setattr(p, "_canonical_market_quotes",
+    # Other legacy tests temporarily stub sys.modules['v061_prospective'];
+    # patch the original evaluate_one function's globals instead.
+    monkeypatch.setitem(evaluate_one.__globals__, "_canonical_market_quotes",
                         lambda payload, starters, cutoff:
                         ("sportsbet", {"horsea": 4.0, "horseb": 6.0, "horsec": 8.0}, None))
     report, issues, detail = evaluate_one(_archive(), _results())
@@ -118,8 +120,9 @@ def test_prospective_joint_winners_pass_integrity_and_preserve_top_pick(monkeypa
 
 
 def test_other_joint_winner_can_win_when_original_rank1_does_not(monkeypatch):
-    import v061_prospective as p
-    monkeypatch.setattr(p, "_canonical_market_quotes",
+    # Other legacy tests temporarily stub sys.modules['v061_prospective'];
+    # patch the original evaluate_one function's globals instead.
+    monkeypatch.setitem(evaluate_one.__globals__, "_canonical_market_quotes",
                         lambda payload, starters, cutoff:
                         ("sportsbet", {"horsea": 4.0, "horseb": 6.0, "horsec": 8.0}, None))
     report, issues, detail = evaluate_one(
@@ -158,21 +161,19 @@ def test_zero_winners_in_imported_results_not_evaluable():
 
 
 def test_bulk_import_preview_keeps_two_joint_winners_with_original_identity(monkeypatch):
-    import v044_bulk_results as bulk
-
     class Response:
         def raise_for_status(self):
             pass
         def json(self):
             return _result_payload(_placings(2))
 
-    monkeypatch.setattr(bulk.requests, "get", lambda *args, **kwargs: Response())
+    monkeypatch.setattr(bulk_import.requests, "get", lambda *args, **kwargs: Response())
     predictions = [{
         "race_date": "2026-11-15", "track": "Moe", "race_number": 5,
         "horse": name, "prediction_batch_id": "original", "predicted_at":
         "2026-11-14T23:01:00+00:00",
     } for name in ("Horse A", "Horse B", "Horse C")]
-    fetched = bulk._fetch(("2026-11-15", "Moe", 5), "test-key", predictions)
+    fetched = bulk_fetch(("2026-11-15", "Moe", 5), "test-key", predictions)
     assert fetched["race"] == ("2026-11-15", "Moe", 5)
     assert fetched["dead_heat_first"] is True
     assert fetched["joint_winners"] == ["Horse A", "Horse B"]
