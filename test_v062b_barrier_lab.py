@@ -12,6 +12,8 @@ def test_barrier_rejects_invalid_and_boolean():
 
 def test_distance_requires_valid_unambiguous_metadata():
     assert _distance('1200') == 1200
+    assert _distance('1200m') == 1200
+    assert _distance('1,200m') is None
     assert _unique_field({'race':{'distance':1200}}, ('distance',), _distance) == 1200
     assert _unique_field({'distance':1200,'race':{'distance':1400}}, ('distance',), _distance) is None
 
