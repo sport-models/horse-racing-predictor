@@ -57,9 +57,18 @@ def render(db_rows, db, secret):
         st.error(f'Could not read race records: {exc}'); return
     cutoff = date.today() - timedelta(days=30)
     existing = {_race(r) for r in existing_rows}
+    try:
+        abandoned_rows = db_rows('abandoned_races', columns='race_date,track,race_number', order=None)
+        abandoned = {_race(r) for r in abandoned_rows}
+    except Exception as exc:
+        st.error('Abandonment registry is missing or unreadable. Run migrate_v045_abandoned.sql '
+                 'in Supabase SQL Editor before using the bulk importer; no writes performed. '+str(exc))
+        return
     races = sorted({_race(p) for p in predictions if cutoff <= date.fromisoformat(str(p['race_date'])[:10]) <= date.today()})
-    pending = [r for r in races if r not in existing]
+    pending = [r for r in races if r not in existing and r not in abandoned]
     st.metric('Saved races not yet imported (within 30 days)', len(pending))
+    if abandoned:
+        st.caption(f'{len(abandoned)} independently verified abandoned race(s) excluded from the pending-final-results list. Use the abandonment registry for review.')
     if not pending:
         st.success('No eligible unimported races found.'); return
     selected = st.multiselect('Races to fetch (maximum 20 per batch)', pending,
@@ -129,6 +138,12 @@ def render(db_rows, db, secret):
                           .eq('track', race[1]).eq('race_number', race[2]).limit(1).execute().data)
                 if exists:
                     skipped.append(label)
+                    continue
+                matching_abandoned = (db().table('abandoned_races').select('id')
+                                      .eq('race_date',race[0]).eq('track_key',race[1].strip().lower())
+                                      .eq('race_number',race[2]).limit(1).execute().data)
+                if matching_abandoned:
+                    skipped.append(label+' (abandoned)')
                     continue
                 db().table('runner_results').insert(item['rows']).execute()
                 saved.append(label)
