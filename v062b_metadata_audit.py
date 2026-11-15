@@ -54,7 +54,7 @@ def audit(historical,prospective):
                     if category is None:continue
                     # This is an evidence inventory, not a validated extractor.
                     # Per-horse form stats must never be used as race distance.
-                    is_runner=bool(re.search(r'(?:runners|horses|participants|entries|form|stats)\\?\[\d+\]',path,re.I))
+                    is_runner=bool(re.search(r'(?:runners|horses|participants|entries|form|stats)\[\d+\]',path,re.I))
                     rows.append({'cohort':cohort,'batch_id':bid,
                                  'race_date':str(a.get('race_date') or '')[:10],
                                  'track':a.get('track'),'race_number':a.get('race_number'),
