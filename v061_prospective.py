@@ -912,7 +912,7 @@ def render_track_performance(secret, bets=None, predictions=None):
         races = races[races['track'].eq(selected_track)].copy()
     from v061w_track_inventory import (build_locked_inventory, summarise_locked_inventory,
                                       merge_locked_with_evaluated_metrics,
-                                      legacy_only_saved_batches)
+                                      legacy_only_saved_batches, build_result_join_diagnostics)
     locked_inventory = build_locked_inventory(races, archives)
     locked_summary = summarise_locked_inventory(locked_inventory)
     eligible = races[races['status'].eq('EVALUABLE_PROVISIONAL')].copy()
@@ -992,6 +992,25 @@ def render_track_performance(secret, bets=None, predictions=None):
                                legacy_only.to_csv(index=False).encode('utf-8'),
                                file_name='v061w_legacy_only_without_archive.csv',
                                mime='text/csv', key='v061w_prod_legacy_only_csv')
+
+    st.markdown('**OFFICIAL RESULTS MATCHING — why a locked race may not be evaluated**')
+    diagnostics = build_result_join_diagnostics(races, results)
+    if not diagnostics.empty:
+        imported = diagnostics[diagnostics['imported_result_rows'].gt(0)]
+        blocked = imported[~imported['evaluation_status'].eq('EVALUABLE_PROVISIONAL')]
+        if not blocked.empty:
+            st.warning(f'{len(blocked)} archived race(s) have imported runner_results rows '
+                       'but were excluded from the model performance table. '
+                       'Check their evaluation_status and diagnosis below.')
+        st.dataframe(diagnostics, hide_index=True, use_container_width=True)
+        st.download_button('Download per-race results matching audit',
+                           diagnostics.to_csv(index=False).encode('utf-8'),
+                           file_name='v061w_imported_results_matching_audit.csv',
+                           mime='text/csv', key='v061w_result_matching_audit_csv')
+    st.caption('Only imported final full-field runner_results are eligible for this '
+               'model evaluation; historical research imports and manually settled '
+               'bet results are separate sources. This read-only audit does not '
+               'fetch fresh results, settle bets or change saved locks.')
 
     st.markdown('**EARLIER SAVED PREDICTIONS — separate legacy evidence**')
     st.caption('Earliest saved prediction batch per race, matched to complete final runner results. '
