@@ -2,6 +2,7 @@ import pandas as pd
 
 from v061w_track_inventory import (
     build_locked_inventory, summarise_locked_inventory, prediction_status,
+    merge_locked_with_evaluated_metrics,
 )
 
 
@@ -73,3 +74,22 @@ def test_empty_date_selection_has_no_false_model_performance():
     inventory = build_locked_inventory(pd.DataFrame(), [_archive("a", 1)])
     assert inventory.empty
     assert summarise_locked_inventory(inventory).empty
+
+
+def test_locked_races_populate_track_model_table_before_results():
+    locked = summarise_locked_inventory(build_locked_inventory(
+        pd.DataFrame([_evaluated("pending", 1, "NO_FINAL_RESULTS")]),
+        [_archive("pending", 1)]))
+    expected_columns = ["track", "archived_races", "awaiting_results",
+                        "review_required", "evaluated_races",
+                        "top1_winners", "top1_win_pct", "simulated_roi_pct"]
+    performance = pd.DataFrame(columns=["track", "evaluated_races",
+                                        "top1_winners", "top1_win_pct",
+                                        "simulated_roi_pct"])
+    output = merge_locked_with_evaluated_metrics(locked, performance, expected_columns)
+    assert len(output) == 1
+    assert output.iloc[0].archived_races == 1
+    assert output.iloc[0].awaiting_results == 1
+    assert output.iloc[0].evaluated_races == 0
+    assert pd.isna(output.iloc[0].top1_win_pct)
+    assert pd.isna(output.iloc[0].simulated_roi_pct)
