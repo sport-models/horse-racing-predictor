@@ -110,3 +110,21 @@ def summarise_locked_inventory(inventory):
                        int(s.eq("EVALUATED_PROVISIONAL").sum())))
               .reset_index())
     return totals[SUMMARY_COLUMNS]
+
+
+def merge_locked_with_evaluated_metrics(locked_summary, evaluated_metrics, columns):
+    """Left join: archived races stay visible when no results have been graded.
+
+    The evaluated-races count comes from audited statuses, never from bets.
+    No missing win percentage or ROI is filled with a misleading zero.
+    """
+    if locked_summary is None or locked_summary.empty:
+        return pd.DataFrame(columns=columns)
+    metrics = (evaluated_metrics if evaluated_metrics is not None else
+               pd.DataFrame(columns=["track"]))
+    metrics = metrics.drop(columns=["evaluated_races", "archived_races",
+                                    "awaiting_results", "review_required"],
+                           errors="ignore")
+    return (locked_summary.merge(metrics, on="track", how="left",
+                                 validate="one_to_one")
+            .reindex(columns=columns))
