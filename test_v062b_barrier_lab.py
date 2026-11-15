@@ -21,6 +21,7 @@ def test_exposure_requires_complete_unique_starter_barriers(monkeypatch):
     monkeypatch.setattr(core,'evaluate_archives',lambda a,r:{
         'races':pd.DataFrame([{'batch_id':'a','status':'EVALUABLE_PROVISIONAL','field_size':2}])}, raising=False)
     monkeypatch.setattr(core,'digest',lambda payload:'verified', raising=False)
+    monkeypatch.setattr(core,'canonical',lambda name: str(name or '').strip().lower(), raising=False)
     monkeypatch.setattr(core,'_locked_runner_metadata',lambda raw:({},set()), raising=False)
     monkeypatch.setattr(core,'race_key',lambda row:('race',), raising=False)
     monkeypatch.setattr(core,'_result_index',lambda rows:{('race',):rows}, raising=False)
