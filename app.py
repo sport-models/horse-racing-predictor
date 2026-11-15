@@ -5,6 +5,7 @@ import v061r_class_validation
 import v061q_stayer_validation
 import v061p_race_type_lab
 import v061o_weight_lab
+import v062a_relative_calibration
 import v061n_relative_lab
 import v061m_capture
 import v061l_confidence
@@ -1733,6 +1734,8 @@ with t5:
     v061l_confidence.render(secret)
     st.divider()
     v061m_capture.render(secret)
+    st.divider()
+    v062a_relative_calibration.render(secret)
     st.divider()
     v061n_relative_lab.render(secret)
     st.divider()
