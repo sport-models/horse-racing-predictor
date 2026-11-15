@@ -34,6 +34,15 @@ def build_historical(batches, features, results):
             continue
         starters={canonical(p.get('name')):p for p in placings
                   if isinstance(p,dict) and p.get('scratched') is not True}
+        # Existing historical study uses one winner / race. Keep genuine
+        # joint-first results in separate manifest instead of inflating wins.
+        winning_keys={key for key,item in starters.items()
+                      if integer(item.get('position'))==1}
+        if len(winning_keys)!=1:
+            issues.append({'batch_id':bid,
+                           'issue':'EXCLUDED_JOINT_FIRST_FROM_SINGLE_WINNER_BARRIER_RESEARCH'
+                           if len(winning_keys)>1 else 'NO_UNIQUE_WINNER'})
+            continue
         indexed={canonical(x.get('horse_key') or x.get('horse')):x for x in f}
         if not starters or len(starters)!=eligible[bid]['actual_starters'] or set(starters)-set(indexed):
             issues.append({'batch_id':bid,'issue':'STARTER_COVERAGE_MISMATCH'})
