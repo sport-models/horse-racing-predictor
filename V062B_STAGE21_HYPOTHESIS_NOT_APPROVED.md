@@ -28,6 +28,6 @@ git pull --ff-only origin v062b-barrier-bias-research
 python -m pytest -q
 python -m streamlit run app.py --server.address 0.0.0.0 --server.port 8501
 ```
-Navigate to **Model Validation → v0.6.2B Stage 2.1 — Country / metro venue hypothesis & unscored horses**, run **Historical** and **Prospective** separately. Export `venue_hypothesis`, `venue_segments`, `missing_score_reasons`, `race_score_coverage`, `dead_heat_exclusions` for each cohort. Optional runner-level and venue-inventory audits available.
+Navigate to **Model Validation → v0.6.2B Stage 2.1 — Country / metro venue hypothesis & unscored horses**. Run **Historical** and **Prospective** separately. Download **one ZIP per cohort** with `Download ALL Stage 2.1 exports for this cohort (ZIP)`. Each ZIP contains runner, venue, score-reason, score-coverage, dead-heat and issue CSVs. Individual CSV downloads remain optional.
 
 **No recommendation to alter the frozen v0.2 engine, no merged PR #4, and no evidence of an independently verified pre-race incremental barrier edge.** Next required experiment is to freeze a baseline vs candidate prior to an untouched forward sample with independent actual-off and input-as-of verification and demonstrably adequate meeting-class coverage.
