@@ -17,11 +17,15 @@ def race(bid='a', cohort=PROSPECTIVE, n=6, date='2026-11-12', track='Seymour', w
             'evidence_status': ('POST_RACE_RETRIEVAL_NOT_POINT_IN_TIME'
                                 if cohort == HISTORICAL else 'SCHEDULE_ONLY_NOT_CERTIFIED'),
         }
+        # Frozen scorer includes barrier; the research quality residual must not.
+        raw_score = 90 - 5 * ranks[idx] + 5 * max(0, min(1, 1 - (barriers[idx]-1)/16))
         if cohort == PROSPECTIVE:
             row['locked_rank'] = ranks[idx]
+            row['locked_score'] = raw_score
         else:
             row['cohort'] = HISTORICAL
             row['research_rank'] = ranks[idx]
+            row['research_model_score'] = raw_score
         rows.append(row)
     return pd.DataFrame(rows)
 
@@ -32,8 +36,8 @@ def test_normalised_draw_and_matched_null_have_one_winner_per_race():
     assert evidence['draw_zone'].tolist() == ['INSIDE', 'INSIDE', 'MIDDLE',
                                               'MIDDLE', 'OUTSIDE', 'OUTSIDE']
     assert math.isclose(evidence['uniform_expected_win'].sum(), 1)
-    assert math.isclose(evidence['rank_matched_expected'].sum(), 1)
-    assert evidence.loc[evidence.draw_zone.eq('INSIDE'), 'rank_matched_expected'].sum() == 1
+    assert math.isclose(evidence['quality_matched_expected'].sum(), 1)
+    assert evidence.loc[evidence.draw_zone.eq('INSIDE'), 'quality_matched_expected'].sum() == 1
     assert summary.loc[summary.segment_type.eq('OVERALL'), 'wins'].sum() == 1
     assert set(summary.gate) == {'INSUFFICIENT_INDEPENDENT_EXPOSURE'}
 
@@ -43,30 +47,30 @@ def test_rank_control_changes_null_when_good_horses_draw_outside():
         race(barriers=[1, 5, 2, 3, 4, 6], winner=0), PROSPECTIVE)
     assert issues.empty
     top = evidence[evidence['quality_tier'].eq('INSIDE')]
-    assert math.isclose(top.rank_matched_expected.sum(), 1)
-    assert math.isclose(top[top.draw_zone.eq('INSIDE')].rank_matched_expected.sum(), 0.5)
-    assert math.isclose(top[top.draw_zone.eq('OUTSIDE')].rank_matched_expected.sum(), 0.5)
+    assert math.isclose(top.quality_matched_expected.sum(), 1)
+    assert math.isclose(top[top.draw_zone.eq('INSIDE')].quality_matched_expected.sum(), 0.5)
+    assert math.isclose(top[top.draw_zone.eq('OUTSIDE')].quality_matched_expected.sum(), 0.5)
     inside = summary[(summary.segment_type == 'OVERALL') & (summary.draw_zone == 'INSIDE')].iloc[0]
-    assert math.isclose(inside.excess_vs_rank_matched_null, 0.5)
+    assert math.isclose(inside.excess_vs_quality_matched_null, 0.5)
 
 
 def test_no_unverified_quality_imputation_or_hindsight_rank_replacement():
     source = race()
-    source.loc[2, 'locked_rank'] = None
+    source.loc[2, 'locked_score'] = None
     evidence, summary, issues = analyse(source, PROSPECTIVE)
     assert len(evidence) == 6
-    assert evidence['rank_matched_expected'].isna().all()
+    assert evidence['quality_matched_expected'].isna().all()
     assert math.isclose(evidence.uniform_expected_win.sum(), 1)
-    assert 'INVALID_OR_MISSING_STORED_MODEL_RANK' in set(issues.issue)
-    assert (summary.rank_matched_coverage_pct == 0).all()
-    assert summary.excess_vs_rank_matched_null.isna().all()
+    assert 'INVALID_OR_MISSING_STORED_MODEL_SCORE' in set(issues.issue)
+    assert (summary.quality_matched_coverage_pct == 0).all()
+    assert summary.excess_vs_quality_matched_null.isna().all()
 
 
 def test_historical_kept_separate_and_never_certified_as_at_lock():
     source = race(cohort=HISTORICAL)
     detail, summary, issues = analyse(source, HISTORICAL)
     assert issues.empty
-    assert set(detail.rank_source) == {'HISTORICAL_POST_RACE_RETRIEVED_MODEL_RANK'}
+    assert set(detail.score_source) == {'HISTORICAL_POST_RACE_RETRIEVED_MODEL_SCORE'}
     assert set(summary.cohort) == {HISTORICAL}
     with pytest.raises(ValueError, match='evidence class'):
         analyse(source, PROSPECTIVE)
@@ -109,7 +113,7 @@ def test_distance_bands_and_field_bands_include_all_valid_entries():
         s = summary[summary.segment_type.eq(group)]
         assert s.starters.sum() == 18
         assert math.isclose(s.uniform_expected_wins.sum(), 2)
-        assert math.isclose(s.rank_matched_expected_wins.sum(), 2)
+        assert math.isclose(s.quality_matched_expected_wins.sum(), 2)
 
 
 def test_none_or_empty_inputs_are_safe():
