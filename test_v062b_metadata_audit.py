@@ -6,7 +6,7 @@ def test_prospective_metadata_audit_preserves_source_and_excludes_runner_stat():
     prospective=[{'batch_id':'p1','race_date':'2026-11-15','track':'B',
                   'payload':{'form_response_raw':{
                       'race':{'distance':1400,'railPosition':'True'},
-                      'runners':[{'name':'A','stats':{'distance':{'starts':5}}}]}}}]
+                      'runners':[{'name':'A','stats':{'distance':1200}}]}}}]
     fields,coverage=audit(historical,prospective)
     race=fields[(fields.cohort=='PROSPECTIVE_AT_LOCK') & (fields.category=='distance')]
     assert len(race)==2
