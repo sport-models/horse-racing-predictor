@@ -1,8 +1,13 @@
 """v0.4.5 abandoned-race recording. No invented placings, no bet changes."""
-from datetime import date, timedelta
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 from urllib.parse import urlparse
 import streamlit as st
 from v042_results import canonical, normalize_track
+
+
+def melbourne_today():
+    return datetime.now(ZoneInfo('Australia/Melbourne')).date()
 
 
 def race_id(row):
@@ -16,10 +21,8 @@ def validate_manual_abandonment(race, evidence_url, evidence_note,
     from datetime import date as d
     day,track,num = race
     day = d.fromisoformat(str(day)[:10])
-    if day >= d.today():
-        # Same-day abandoned is allowed AFTER the user verifies the official announcement.
-        if day > d.today():
-            raise ValueError('A future race cannot be verified abandoned')
+    if day > melbourne_today():
+        raise ValueError('A future race cannot be verified abandoned')
     if race_id({'race_date':day,'track':track,'race_number':num}) not in predicted_races:
         raise ValueError('No saved locked prediction found for selected race')
     if race_id({'race_date':day,'track':track,'race_number':num}) in saved_result_races:
@@ -57,8 +60,9 @@ def render(db_rows, db):
     archived = {race_id(x) for x in predictions}
     finished = {race_id(x) for x in results}
     already = {race_id(x) for x in official}
-    cutoff = date.today()-timedelta(days=30)
-    selectable = sorted(r for r in archived if cutoff <= date.fromisoformat(r[0]) <= date.today()
+    today = melbourne_today()
+    cutoff = today-timedelta(days=30)
+    selectable = sorted(r for r in archived if cutoff <= date.fromisoformat(r[0]) <= today
                         and r not in finished and r not in already)
     st.metric('Saved races eligible for abandonment review',len(selectable))
     if not selectable:
@@ -66,6 +70,12 @@ def render(db_rows, db):
     selected = st.selectbox('Select race already officially declared abandoned',selectable,
                             format_func=lambda r:f'{r[0]} — {r[1]} — R{r[2]}',
                             key='v045_abandoned_selected')
+    if st.session_state.get('v045_abandoned_last_selected') != selected:
+        # A previously ticked confirmation is NEVER valid for a different race.
+        for key in ('v045_abandoned_evidence_url','v045_abandoned_evidence_note',
+                    'v045_abandoned_checked','v045_abandoned_phrase'):
+            st.session_state.pop(key,None)
+        st.session_state['v045_abandoned_last_selected'] = selected
     st.warning('Only use this for an OFFICIALLY CONFIRMED ABANDONMENT. '
                'Do not record delayed, postponed, results-pending, or cancelled-before-start '
                'races without verifying the actual race disposition.')
