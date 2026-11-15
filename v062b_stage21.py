@@ -279,13 +279,27 @@ def render(secret):
         if not issues.empty:
             st.dataframe(issues,hide_index=True,use_container_width=True)
     label='historical' if cohort==HISTORICAL else 'prospective'
-    for name,data in [('starters',starter),('venue_segments',segments),
-                      ('venue_inventory',inventory),('missing_score_reasons',reasons),
-                      ('race_score_coverage',race_coverage),('venue_hypothesis',hypotheses),
-                      ('dead_heat_exclusions',manifest),('stage2_issues',issues)]:
-        st.download_button('Export Stage 2.1 '+name,data.to_csv(index=False).encode('utf-8'),
-                           file_name='v062b_stage21_'+name+'_'+label+'.csv',
-                           mime='text/csv',key='v062b_stage21_'+label+'_'+name)
+    exports = [('starters',starter),('venue_segments',segments),
+               ('venue_inventory',inventory),('missing_score_reasons',reasons),
+               ('race_score_coverage',race_coverage),('venue_hypothesis',hypotheses),
+               ('dead_heat_exclusions',manifest),('stage2_issues',issues)]
+    from io import BytesIO
+    from zipfile import ZipFile, ZIP_DEFLATED
+    out = BytesIO()
+    with ZipFile(out, mode='w', compression=ZIP_DEFLATED) as archive:
+        for name,data in exports:
+            archive.writestr('v062b_stage21_'+name+'_'+label+'.csv',
+                             data.to_csv(index=False))
+    st.download_button('Download ALL Stage 2.1 exports for this cohort (ZIP)',
+                       data=out.getvalue(),
+                       file_name='v062b_stage21_'+label+'_audit_bundle.zip',
+                       mime='application/zip',key='v062b_stage21_bundle_'+label)
+    with st.expander('Optional: Download individual CSVs'):
+        for name,data in exports:
+            st.download_button('Export Stage 2.1 '+name,
+                               data.to_csv(index=False).encode('utf-8'),
+                               file_name='v062b_stage21_'+name+'_'+label+'.csv',
+                               mime='text/csv',key='v062b_stage21_'+label+'_'+name)
     st.warning('RESEARCH ONLY: venue is NOT certified race-meeting class; historical '
                'inputs were retrieved after racing, and prospective dates are few. '
                'The quality comparison conditions on the winner tier and is NOT a '
