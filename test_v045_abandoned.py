@@ -54,3 +54,39 @@ def test_short_attestation_rejected():
     with pytest.raises(ValueError,match='Describe'):
         validate_manual_abandonment(race,'https://official.example/race',
             'yes',{key},set(),set())
+
+
+def test_prospective_abandoned_race_has_no_win_loss_or_roi():
+    from v061_prospective import evaluate_archives
+    from test_dead_heat_results import _archive
+    archive=_archive()
+    marker={'race_date':archive['race_date'],'track':archive['track'],
+            'race_number':archive['race_number'],'outcome':'ABANDONED',
+            'official_evidence_url':'https://official.example/notice'}
+    report=evaluate_archives([archive],[],[marker])
+    race=report['races'].iloc[0]
+    summary=report['summary'].iloc[0]
+    assert race.status=='ABANDONED_OFFICIAL_MANUAL_VERIFICATION'
+    assert race.top1_won is None
+    assert race.top3_hit is None
+    assert race.abandonment_evidence_url=='https://official.example/notice'
+    assert int(summary.abandoned_races)==1
+    assert int(summary.result_complete_provisional)==0
+    assert not report['runners'].shape[0]
+    assert 'ABANDONED_EXCLUDED_FROM_WIN_AND_ROI_METRICS' in set(report['evidence'].reason) if 'evidence' in report else (
+        'ABANDONED_EXCLUDED_FROM_WIN_AND_ROI_METRICS' in set(report['gaps'].reason))
+
+
+def test_conflict_between_abandoned_race_and_final_results_blocks_metrics():
+    from v061_prospective import evaluate_archives
+    from test_dead_heat_results import _archive,_results
+    archive=_archive()
+    marker={'race_date':archive['race_date'],'track':archive['track'],
+            'race_number':archive['race_number'],'outcome':'ABANDONED',
+            'official_evidence_url':'https://official.example/notice'}
+    report=evaluate_archives([archive],_results(winners=('Horse A',)),[marker])
+    race=report['races'].iloc[0]
+    assert race.status=='CONFLICT_ABANDONED_AND_RUNNER_RESULTS'
+    assert race.top1_won is None
+    assert report['summary'].iloc[0].abandoned_result_conflicts==1
+    assert report['summary'].iloc[0].result_complete_provisional==0
