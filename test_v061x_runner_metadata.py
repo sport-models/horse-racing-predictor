@@ -1,4 +1,5 @@
 from v061_prospective import _runner_scoring_status, _locked_runner_metadata
+from v042_results import canonical
 
 
 def test_null_score_explicit_zero_starts():
@@ -25,5 +26,5 @@ def test_metadata_read_from_archived_form():
     data, duplicates = _locked_runner_metadata({'runners': [
         {'name': 'Example Horse', 'jockey': 'J. Smith', 'trainer': 'T. Jones'}
     ]})
-    assert data['example horse']['jockey'] == 'J. Smith'
+    assert data[canonical('Example Horse')]['jockey'] == 'J. Smith'
     assert not duplicates
