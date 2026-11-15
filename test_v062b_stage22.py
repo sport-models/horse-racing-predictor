@@ -93,9 +93,7 @@ def test_invalid_or_conflicting_fixture_evidence_rejected():
     assert 'DUPLICATE_MEETING_ROW' in set('|'.join(issues.issues).split('|'))
 
 
-def test_prospective_bad_archive_hash_rejects_metadata(monkeypatch):
-    import v061_prospective as p
-    monkeypatch.setattr(p,'digest',lambda data:'good-hash',raising=False)
+def test_prospective_bad_archive_hash_rejects_metadata():
     index,issues=prospective_raw_index([{
         'batch_id':'a','payload_sha256':'bad-hash',
         'payload':{'form_response_raw':{'runners':[{'name':'A','careerStarts':0}]}}}])
