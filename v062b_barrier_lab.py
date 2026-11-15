@@ -117,6 +117,7 @@ def build(archives, results):
                 'rail':rail,'track_condition':going,'actual_starters':len(active),
                 'locked_rank':locked.get('rank'),
                 'locked_score':locked.get('score'),
+                'locked_scoring_status':locked.get('scoring_status'),
                 'won':int(result.get('finishing_position') == 1),
                 'uniform_expected_win':1/len(active),
                 'evidence_status':'SCHEDULE_ONLY_NOT_CERTIFIED',
