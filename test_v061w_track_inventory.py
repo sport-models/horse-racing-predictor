@@ -3,6 +3,7 @@ import pandas as pd
 from v061w_track_inventory import (
     build_locked_inventory, summarise_locked_inventory, prediction_status,
     merge_locked_with_evaluated_metrics, legacy_only_saved_batches,
+    build_result_join_diagnostics,
 )
 
 
@@ -115,3 +116,42 @@ def test_unarchived_legacy_batches_are_visible_as_diagnostics_only():
     assert legacy_only_saved_batches(
         saved, archives, lambda date: date == "2026-11-15",
         "Geelong").empty
+
+
+def test_imported_complete_results_are_evaluable_independent_of_bets():
+    report = pd.DataFrame([
+        _evaluated("one", 1, "EVALUABLE_PROVISIONAL", "Moe"),
+        _evaluated("two", 2, "NO_FINAL_RESULTS", "Moe"),
+    ])
+    results = [
+        {"race_date": "2026-11-15", "track": "moe", "race_number": 1,
+         "horse": "A", "result_status": "final", "scratched": False,
+         "finishing_position": 1},
+        {"race_date": "2026-11-15", "track": "Moe", "race_number": 1,
+         "horse": "B", "result_status": "final", "scratched": False,
+         "finishing_position": 2},
+    ]
+    diagnostics = build_result_join_diagnostics(report, results)
+    assert diagnostics.loc[0, "imported_result_rows"] == 2
+    assert diagnostics.loc[0, "final_result_rows"] == 2
+    assert diagnostics.loc[0, "diagnosis"] == "EVALUATED_OK"
+    assert diagnostics.loc[1, "diagnosis"] == "NO_MATCHING_RUNNER_RESULTS"
+
+
+def test_imported_results_are_not_equivalent_to_evaluable_results():
+    report = pd.DataFrame([
+        _evaluated("bad", 1, "INVALID_OR_INCOMPLETE_OFFICIAL_RESULTS", "Moe"),
+        _evaluated("timing", 2, "INCOMPLETE_OR_AFTER_SCHEDULE_TIMESTAMPS", "Moe"),
+    ])
+    results = [
+        {"race_date": "2026-11-15", "track": "Moe", "race_number": 1,
+         "result_status": "final", "scratched": False,
+         "finishing_position": 1},
+        {"race_date": "2026-11-15", "track": "Moe", "race_number": 2,
+         "result_status": "final", "scratched": False,
+         "finishing_position": 1},
+    ]
+    diagnostics = build_result_join_diagnostics(report, results)
+    assert diagnostics.loc[0, "diagnosis"] == "OFFICIAL_RESULT_INTEGRITY_REVIEW"
+    assert diagnostics.loc[1, "diagnosis"] == "ARCHIVE_OR_TIMING_EVIDENCE_REVIEW"
+    assert diagnostics["imported_result_rows"].tolist() == [1, 1]
