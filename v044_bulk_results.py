@@ -36,9 +36,12 @@ def _fetch(race, api_key, predictions):
     missing_starters = sorted(r['horse'] for r in rows if not r['scratched'] and r['horse_key'] not in predicted)
     for row in rows:
         row.update(race_date=race[0], track=race[1], race_number=race[2])
+    joint_winners = [r['horse'] for r in rows
+                     if r['scratched'] is False and r['finishing_position'] == 1]
     return {'race': race, 'rows': rows, 'batch': batch, 'missing_starters': missing_starters,
             'starters': sum(not r['scratched'] for r in rows),
-            'scratches': sum(bool(r['scratched']) for r in rows)}
+            'scratches': sum(bool(r['scratched']) for r in rows),
+            'joint_winners': joint_winners, 'dead_heat_first': len(joint_winners) == 2}
 
 
 def render(db_rows, db, secret):
@@ -90,6 +93,8 @@ def render(db_rows, db, secret):
         overview.append({'Date': race[0], 'Track': race[1], 'Race': race[2],
                          'Starters': item['starters'], 'Scratches': item['scratches'],
                          'Total runners': len(item['rows']),
+                         'Winners (joint first)': len(item.get('joint_winners', [])),
+                         'Two-way dead heat': bool(item.get('dead_heat_first')),
                          'Missing predicted starters': len(item['missing_starters'])})
     st.dataframe(pd.DataFrame(overview), hide_index=True, use_container_width=True)
     for item in items:
@@ -99,10 +104,21 @@ def render(db_rows, db, secret):
                 st.warning(f"Unpredicted starters: {item['missing_starters']}")
             st.dataframe(pd.DataFrame(item['rows'])[['horse', 'finishing_position', 'scratched', 'starting_price']],
                          hide_index=True, use_container_width=True)
+    dead_heats = [item for item in items if item.get('dead_heat_first')]
+    dead_heat_verified = True
+    if dead_heats:
+        labels = [f"{x['race'][0]} {x['race'][1]} R{x['race'][2]}: " +
+                  ', '.join(x['joint_winners']) for x in dead_heats]
+        st.warning('OFFICIAL TWO-WAY DEAD HEAT(S) FOR FIRST: ' + '; '.join(labels) +
+                   '. Both winning horses must retain finishing position 1.')
+        dead_heat_verified = st.checkbox(
+            'I independently verified BOTH joint-first finishers for EVERY dead heat listed',
+            key='v044_dead_heat_verified')
     st.warning('Review all races and scratches before saving. Failed/pending races are excluded.')
     confirmed = st.checkbox('I have reviewed the official results for EVERY race shown and accept any coverage gaps',
                             key='v044_confirm')
-    if st.button('Save reviewed races to Supabase', type='primary', disabled=not confirmed, key='v044_save'):
+    if st.button('Save reviewed races to Supabase', type='primary',
+                 disabled=not (confirmed and dead_heat_verified), key='v044_save'):
         saved, skipped, failed = [], [], []
         for item in items:
             race = item['race']

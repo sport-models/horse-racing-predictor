@@ -65,8 +65,11 @@ def parse(payload):
             'result_status': 'final', 'result_version': payload.get('resultVersion'),
             'result_updated_at': payload.get('resultUpdatedAt'), 'source': 'FormFav',
         })
-    if winners != 1:
-        raise ValueError(f'Expected exactly one winner, found {winners}. Manual review required.')
+    # Official two-way dead heats are legitimate: two distinct starters can
+    # each be recorded as finishing_position=1. Require an explicit second
+    # confirmation in the UI before saving such a field; never choose one.
+    if winners not in (1, 2):
+        raise ValueError(f'Expected one winner or an explicitly verified two-way dead heat, found {winners}. Manual review required.')
     return rows
 
 
@@ -163,11 +166,21 @@ def render(db_rows, db, secret):
         st.warning('Prediction coverage is incomplete: these actual starters were not in the '
                    f'earliest batch: {preview["missing_starters"]}. Full official results can still '
                    'be stored, but do not treat the batch as a complete-field backtest.')
+    winning_names = frame.loc[(frame['finishing_position'] == 1) & (~frame['scratched']), 'horse'].tolist()
+    dead_heat = len(winning_names) == 2
+    verified_dead_heat = True
+    if dead_heat:
+        st.warning('TWO-WAY DEAD HEAT FOR FIRST: ' + ', '.join(winning_names) +
+                   '. Verify both horses were officially declared joint first. '
+                   'Both finishing positions will be preserved as 1.')
+        verified_dead_heat = st.checkbox(
+            'I independently verified BOTH joint-first finishers against the official result',
+            key='v0421_confirm_dead_heat')
     st.warning('Review all results. Existing imported races will not be overwritten.')
     confirmed = st.checkbox('I verified the entire official field and acknowledge any prediction coverage gaps',
                             key='v0421_confirm')
     if st.button('Save full-field results to Supabase', key='v0421_save', type='primary',
-                 disabled=not confirmed):
+                 disabled=not (confirmed and verified_dead_heat)):
         try:
             existing = (db().table('runner_results').select('id')
                         .eq('race_date', race[0]).eq('track', race[1])
