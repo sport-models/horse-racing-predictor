@@ -73,7 +73,7 @@ def test_prospective_abandoned_race_has_no_win_loss_or_roi():
     assert race.abandonment_evidence_url=='https://official.example/notice'
     assert int(summary.abandoned_races)==1
     assert int(summary.result_complete_provisional)==0
-    assert not report['runners'].shape[0]
+    assert not report['runner_audit'].shape[0]
     assert 'ABANDONED_EXCLUDED_FROM_WIN_AND_ROI_METRICS' in set(report['missing_evidence'].reason)
 
 
@@ -83,7 +83,11 @@ def test_conflict_between_abandoned_race_and_final_results_blocks_metrics():
     marker={'race_date':archive['race_date'],'track':archive['track'],
             'race_number':archive['race_number'],'outcome':'ABANDONED',
             'official_evidence_url':'https://official.example/notice'}
-    report=evaluate_archives([archive],_results(winners=('Horse A',)),[marker])
+    official=_results(winners=('Horse A',))
+    for row in official:
+        row.update(race_date=archive['race_date'],track=archive['track'],
+                   race_number=archive['race_number'])
+    report=evaluate_archives([archive],official,[marker])
     race=report['races'].iloc[0]
     assert race.status=='CONFLICT_ABANDONED_AND_RUNNER_RESULTS'
     assert race.top1_won is None
