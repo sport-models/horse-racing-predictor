@@ -30,12 +30,13 @@ def test_exposure_requires_complete_unique_starter_barriers(monkeypatch):
     archives=[{'batch_id':'a','payload_sha256':'verified','race_date':'2026-11-15',
                'track':'Seymour','race_number':1,'payload':{
                    'form_response_raw':{'distance':1200},
-                   'rankings':[{'horse':'A','rank':1,'barrier':1},
-                               {'horse':'B','rank':2,'barrier':2}]}}]
+                   'rankings':[{'horse':'A','rank':1,'score':74.6,'barrier':1},
+                               {'horse':'B','rank':2,'score':68.4,'barrier':2}]}}]
     results=[{'horse':'A','scratched':False,'finishing_position':1},
              {'horse':'B','scratched':False,'finishing_position':2}]
     detail, summary, issues=build(archives,results)
     assert len(detail)==2 and len(summary)==2
+    assert set(detail.locked_score)=={74.6,68.4}
     assert summary.wins.sum()==1
     assert summary.expected_wins_uniform.sum()==1
     assert set(summary.gate)=={'INSUFFICIENT_EXPOSURE'}
