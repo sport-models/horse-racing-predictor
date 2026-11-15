@@ -1,5 +1,16 @@
-from v061_prospective import _runner_scoring_status, _locked_runner_metadata
+# Other legacy test modules install stub v061_prospective in sys.modules during
+# pytest collection. Load the real module under a unique name for isolation.
+import importlib.util
+from pathlib import Path
 from v042_results import canonical
+
+_spec = importlib.util.spec_from_file_location(
+    "_v061x_real_prospective", Path(__file__).with_name("v061_prospective.py")
+)
+_real = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(_real)
+_runner_scoring_status = _real._runner_scoring_status
+_locked_runner_metadata = _real._locked_runner_metadata
 
 
 def test_null_score_explicit_zero_starts():
