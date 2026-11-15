@@ -1,5 +1,5 @@
 """v0.4.5 abandoned-race recording. No invented placings, no bet changes."""
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 from urllib.parse import urlparse
 import streamlit as st
