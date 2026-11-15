@@ -231,3 +231,47 @@ def build_result_join_diagnostics(visible_races, imported_results):
             "diagnosis": diagnosis,
         })
     return pd.DataFrame(rows, columns=columns)
+
+
+def result_import_reconciliation(visible_races, imported_results, start_date=None, end_date=None):
+    """Read-only, result-side complement to the per-archive matching audit.
+
+    Shows whether runner_results contains any imported rows in the date window,
+    and whether those results are keyed to a locked archive race. Do not infer
+    that another table or provider has a completed official import.
+    """
+    locked_keys = set()
+    if visible_races is not None and not visible_races.empty:
+        locked_keys = {_race_match_key(x) for x in visible_races.to_dict("records")}
+    result_rows = {}
+    day_counts = {}
+    for r in imported_results or []:
+        k = _race_match_key(r)
+        if k is None:
+            continue
+        day_counts[k[0]] = day_counts.get(k[0], 0) + 1
+        if start_date is not None and k[0] < start_date:
+            continue
+        if end_date is not None and k[0] > end_date:
+            continue
+        result_rows.setdefault(k, []).append(r)
+    report = []
+    for (race_day, track_key, number), items in sorted(result_rows.items()):
+        report.append({
+            "race_date": race_day,
+            "results_track": str(items[0].get("track") or ""),
+            "race_number": number,
+            "imported_runner_rows": len(items),
+            "all_rows_final": all(x.get("result_status") == "final" for x in items),
+            "matches_selected_locked_race": (race_day, track_key, number) in locked_keys,
+        })
+    columns = ["race_date", "results_track", "race_number",
+               "imported_runner_rows", "all_rows_final",
+               "matches_selected_locked_race"]
+    other_dates = (pd.DataFrame([
+        {"race_date": day, "imported_runner_rows": n}
+        for day, n in day_counts.items()
+    ], columns=["race_date", "imported_runner_rows"])
+      .sort_values("race_date", ascending=False, kind="stable")
+      .reset_index(drop=True))
+    return pd.DataFrame(report, columns=columns), other_dates
