@@ -72,12 +72,21 @@ def build(archives, results):
     report = evaluate_archives(archives, results)
     eligible = {str(r.batch_id): r for r in report['races'].itertuples(index=False)
                 if r.status == 'EVALUABLE_PROVISIONAL'}
+    # Two-way dead heats remain legitimate in model performance but cannot
+    # enter this single-winner barrier hypothesis, whose baseline assumes
+    # exactly one winner per race. Retain an explicit exclusion reason.
+    dead_heats = {str(r.batch_id) for r in report['races'].itertuples(index=False)
+                  if getattr(r, 'joint_first_count', None) is not None
+                  and getattr(r, 'joint_first_count', 0) > 1}
     indexed = _result_index(results)
     rows, issues = [], []
+    issues.extend({'batch_id':bid,
+                   'issue':'EXCLUDED_JOINT_FIRST_FROM_SINGLE_WINNER_BARRIER_RESEARCH'}
+                  for bid in sorted(dead_heats))
     seen = set()
     for archive in archives:
         bid = str(archive.get('batch_id'))
-        if bid not in eligible:
+        if bid not in eligible or bid in dead_heats:
             continue
         if bid in seen:
             issues.append({'batch_id':bid,'issue':'DUPLICATE_BATCH'})
