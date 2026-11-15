@@ -158,3 +158,76 @@ def legacy_only_saved_batches(predictions, archives, in_window, selected_track):
     return (pd.DataFrame(data, columns=LEGACY_ONLY_COLUMNS)
             .sort_values(["race_date", "track", "race_number"], kind="stable")
             .reset_index(drop=True))
+
+
+def _race_match_key(item):
+    """Mirror the race identity used by prospective evaluation."""
+    try:
+        number = int(item.get("race_number"))
+    except (TypeError, ValueError, OverflowError):
+        return None
+    return (
+        str(item.get("race_date") or "")[:10],
+        " ".join(str(item.get("track") or "").casefold().split()),
+        number,
+    )
+
+
+def build_result_join_diagnostics(visible_races, imported_results):
+    """Explain why a saved lock is absent from *evaluated* model performance.
+
+    Read the exact runner_results rows already read by Performance by Track.
+    This never treats bet settlements or historical research imports as
+    completed official runner_results imports.
+    """
+    columns = [
+        "race_date", "track", "race_number", "batch_id",
+        "imported_result_rows", "final_result_rows", "starter_rows",
+        "scratched_rows", "winner_rows", "evaluation_status", "diagnosis",
+    ]
+    if visible_races is None or visible_races.empty:
+        return pd.DataFrame(columns=columns)
+    from collections import defaultdict
+    grouped = defaultdict(list)
+    for result in imported_results or []:
+        key = _race_match_key(result)
+        if key:
+            grouped[key].append(result)
+    rows = []
+    for race in visible_races.to_dict("records"):
+        results = grouped.get(_race_match_key(race), [])
+        final = sum(r.get("result_status") == "final" for r in results)
+        starters = [r for r in results if r.get("scratched") is False]
+        scratched = sum(r.get("scratched") is True for r in results)
+        winners = sum(r.get("finishing_position") == 1 for r in starters)
+        status = str(race.get("status") or "UNASSESSED")
+        if status == "EVALUABLE_PROVISIONAL":
+            diagnosis = "EVALUATED_OK"
+        elif not results:
+            diagnosis = "NO_MATCHING_RUNNER_RESULTS"
+        elif final != len(results):
+            diagnosis = "IMPORTED_RESULTS_NOT_ALL_FINAL"
+        elif winners != 1:
+            diagnosis = "INVALID_OR_INCOMPLETE_WINNER_ROWS"
+        elif "INVALID_OR_INCOMPLETE_OFFICIAL_RESULTS" in status:
+            diagnosis = "OFFICIAL_RESULT_INTEGRITY_REVIEW"
+        elif "ACTUAL_STARTER_MISSING_FROM_SNAPSHOT" in status:
+            diagnosis = "OFFICIAL_STARTER_NOT_IN_LOCKED_RANKINGS"
+        elif "ORIGINAL_TOP1_SCRATCHED_RETROSPECTIVE_SUBSTITUTION" in status:
+            diagnosis = "ORIGINAL_TOP_RANKED_HORSE_SCRATCHED"
+        else:
+            diagnosis = "ARCHIVE_OR_TIMING_EVIDENCE_REVIEW"
+        rows.append({
+            "race_date": str(race.get("race_date") or "")[:10],
+            "track": str(race.get("track") or ""),
+            "race_number": race.get("race_number"),
+            "batch_id": race.get("batch_id"),
+            "imported_result_rows": len(results),
+            "final_result_rows": final,
+            "starter_rows": len(starters),
+            "scratched_rows": scratched,
+            "winner_rows": winners,
+            "evaluation_status": status,
+            "diagnosis": diagnosis,
+        })
+    return pd.DataFrame(rows, columns=columns)
