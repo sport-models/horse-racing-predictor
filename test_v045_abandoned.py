@@ -73,8 +73,7 @@ def test_prospective_abandoned_race_has_no_win_loss_or_roi():
     assert int(summary.abandoned_races)==1
     assert int(summary.result_complete_provisional)==0
     assert not report['runners'].shape[0]
-    assert 'ABANDONED_EXCLUDED_FROM_WIN_AND_ROI_METRICS' in set(report['evidence'].reason) if 'evidence' in report else (
-        'ABANDONED_EXCLUDED_FROM_WIN_AND_ROI_METRICS' in set(report['gaps'].reason))
+    assert 'ABANDONED_EXCLUDED_FROM_WIN_AND_ROI_METRICS' in set(report['missing_evidence'].reason)
 
 
 def test_conflict_between_abandoned_race_and_final_results_blocks_metrics():
