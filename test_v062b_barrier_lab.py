@@ -44,3 +44,26 @@ def test_exposure_requires_complete_unique_starter_barriers(monkeypatch):
     detail, summary, issues=build(archives,results)
     assert detail.empty
     assert 'INCOMPLETE_OR_DUPLICATE_BARRIER_EXPOSURE' in set(issues.issue)
+
+
+def test_prospective_joint_first_not_counted_as_one_winner_barrier_race(monkeypatch):
+    import v061_prospective as core
+    monkeypatch.setattr(core,'evaluate_archives',lambda a,r:{
+        'races':pd.DataFrame([{'batch_id':'a','status':'EVALUABLE_PROVISIONAL',
+                               'field_size':2,'joint_first_count':2}])},raising=False)
+    monkeypatch.setattr(core,'digest',lambda p:'verified',raising=False)
+    monkeypatch.setattr(core,'canonical',lambda v:str(v or '').lower(),raising=False)
+    monkeypatch.setattr(core,'_locked_runner_metadata',lambda raw:({},set()),raising=False)
+    monkeypatch.setattr(core,'race_key',lambda row:('race',),raising=False)
+    monkeypatch.setattr(core,'_result_index',lambda rows:{('race',):rows},raising=False)
+    archives=[{'batch_id':'a','race_date':'2026-11-15','track':'Donald',
+               'race_number':5,'payload_sha256':'verified','payload':{
+               'form_response_raw':{'distance':'1200m'},
+               'rankings':[{'horse':'A','rank':1,'barrier':1},
+                           {'horse':'B','rank':2,'barrier':2}]}}]
+    results=[{'horse':'A','scratched':False,'finishing_position':1},
+             {'horse':'B','scratched':False,'finishing_position':1}]
+    starters,summary,issues=build(archives,results)
+    assert starters.empty
+    assert summary.empty
+    assert 'EXCLUDED_JOINT_FIRST_FROM_SINGLE_WINNER_BARRIER_RESEARCH' in set(issues.issue)
