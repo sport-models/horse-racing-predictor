@@ -55,6 +55,7 @@ def build_historical(batches, features, results):
                 'horse':feature.get('horse'),'barrier':barrier,'distance_m':distance,
                 'research_rank':feature.get('model_rank'),
                 'research_model_score':feature.get('model_score'),
+                'research_career_starts':feature.get('career_starts'),
                 'actual_starters':len(starters),
                 'won':int(integer(result.get('position'))==1),
                 'uniform_expected_win':1/len(starters),
