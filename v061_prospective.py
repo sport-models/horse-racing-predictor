@@ -99,6 +99,60 @@ def _scorer_hash(*functions):
     return sha256('\n'.join(code).encode('utf-8')).hexdigest()
 
 
+def _locked_runner_metadata(form_response):
+    """Read metadata only from the archived at-lock FormFav payload, never today's form."""
+    candidates = []
+    def visit(node):
+        if isinstance(node, dict):
+            for key, value in node.items():
+                if key == 'runners' and isinstance(value, list):
+                    candidates.extend(x for x in value if isinstance(x, dict))
+                elif isinstance(value, (dict, list)):
+                    visit(value)
+        elif isinstance(node, list):
+            for value in node:
+                visit(value)
+    visit(form_response)
+    indexed, duplicates = {}, set()
+    for runner in candidates:
+        name = runner.get('name') or runner.get('runnerName') or runner.get('horseName')
+        key = canonical(name)
+        if not key:
+            continue
+        if key in indexed:
+            duplicates.add(key)
+        else:
+            indexed[key] = runner
+    return indexed, duplicates
+
+
+def _runner_scoring_status(score, runner):
+    """NULL score is never silently equated to a confirmed debutant."""
+    if score is not None:
+        return 'SCORED'
+    if not runner:
+        return 'NULL_SCORE_FORM_RUNNER_NOT_FOUND'
+    starts = runner.get('careerStarts')
+    if starts is None:
+        starts = runner.get('starts')
+    if starts is not None:
+        try:
+            if float(starts) == 0:
+                return 'NULL_SCORE_ZERO_CAREER_STARTS'
+        except (TypeError, ValueError):
+            pass
+    # An explicitly empty provider form history explains the absence of recent-form
+    # evidence, but does NOT establish that the horse has never raced.
+    # Only use recognised, non-null form fields; do not infer from missing keys.
+    for field in ('form', 'recentForm', 'recent_form'):
+        if field not in runner:
+            continue
+        history = runner[field]
+        if isinstance(history, (list, dict, str)) and not history:
+            return 'NULL_SCORE_NO_RECORDED_RECENT_FORM'
+    return 'NULL_SCORE_REASON_UNVERIFIED'
+
+
 def prepare_live_snapshot(*, race_date, track, track_slug, race_number, formfav_key, puntersedge_key,
                           get_items, get_value, meeting_name, score_runner, recent_form_score,
                           win_rate, as_number, odds_find_race, odds_runner_quotes,
@@ -180,7 +234,14 @@ def prepare_live_snapshot(*, race_date, track, track_slug, race_number, formfav_
         raise ValueError('Scheduled start elapsed before snapshot could be saved; no lock permitted.')
     engine_hash = _scorer_hash(score_runner, recent_form_score, win_rate, as_number)
     rankings = [{'horse': str(r['Horse']), 'rank': int(r['Rank']),
-                 'score': None if pd.isna(r['Form Score']) else float(r['Form Score'])}
+                 'score': None if pd.isna(r['Form Score']) else float(r['Form Score']),
+                 'jockey': r.get('Jockey'), 'trainer': r.get('Trainer'),
+                 'barrier': r.get('Barrier'), 'weight': r.get('Weight'),
+                 'scoring_status': _runner_scoring_status(
+                     None if pd.isna(r['Form Score']) else float(r['Form Score']),
+                     next((x for x in runners if isinstance(x, dict) and
+                           canonical(x.get('name') or x.get('runnerName') or x.get('horseName'))
+                           == canonical(r['Horse'])), None))}
                 for r in df.to_dict('records')]
     # Provider data, not credentials, is archived to allow future replay checks.
     payload = {
@@ -611,15 +672,31 @@ def audit_locked_prediction_rows(archives, legacy_rows):
             'actual_off_certified': bool(payload.get('official_actual_off_verified')),
             'input_asof_certified': bool(payload.get('input_asof_provenance_verified')),
         })
+        metadata, ambiguous = _locked_runner_metadata(payload.get('form_response_raw'))
         for r in rankings:
             if not isinstance(r, dict):
                 continue
             horse = str(r.get('horse') or '')
             quotes = odds.get(horse) or []
+            runner_key = canonical(horse)
+            raw_runner = metadata.get(runner_key) if runner_key not in ambiguous else None
+            source = 'RANKING_LOCKED' if 'jockey' in r or 'trainer' in r else (
+                'FORM_RAW_AT_LOCK' if raw_runner is not None else 'NOT_FOUND_OR_AMBIGUOUS')
+            raw_runner = raw_runner or {}
+            jockey = r.get('jockey') if 'jockey' in r else raw_runner.get('jockey')
+            trainer = r.get('trainer') if 'trainer' in r else raw_runner.get('trainer')
+            score = r.get('score')
             detail.append({
                 'batch_id': batch, 'race_date': archive.get('race_date'),
                 'track': archive.get('track'), 'race_number': archive.get('race_number'),
-                'horse': horse, 'locked_rank': r.get('rank'), 'locked_score': r.get('score'),
+                'horse': horse, 'locked_rank': r.get('rank'), 'locked_score': score,
+                'scoring_status': r.get('scoring_status') or _runner_scoring_status(score, raw_runner),
+                'jockey_at_lock': jockey, 'trainer_at_lock': trainer,
+                'barrier_at_lock': r.get('barrier', raw_runner.get('barrier')),
+                'weight_at_lock': r.get('weight', raw_runner.get('weight')),
+                'runner_metadata_source': source,
+                'jockey_status': 'CAPTURED' if jockey else 'NOT_SUPPLIED_AT_LOCK',
+                'trainer_status': 'CAPTURED' if trainer else 'NOT_SUPPLIED_AT_LOCK',
                 'archive_created_at_utc': archive.get('created_at'),
                 'scheduled_start_utc': archive.get('scheduled_start_utc'),
                 'odds_capture_status': payload.get('bookmaker_capture_status'),
