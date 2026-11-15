@@ -25,3 +25,25 @@ def test_historical_cohort_separated_and_missing_distance_preserved(monkeypatch)
     detail,_,issues,_=build_historical(batches,features,results)
     assert detail.empty
     assert 'INCOMPLETE_OR_DUPLICATE_BARRIER_EXPOSURE' in set(issues.issue)
+
+
+def test_historical_two_joint_first_winners_explicitly_excluded(monkeypatch):
+    import v061b_historical as h
+    monkeypatch.setattr(h,'build_reports',lambda b,f,r:{
+        'races':pd.DataFrame([{
+            'batch_id':'dead','status':'EVALUABLE_RETROSPECTIVE_RESEARCH',
+            'actual_starters':2, 'winner_count':2,
+            'winning_horses':'A | B'}])})
+    monkeypatch.setattr(h,'digest',lambda p:'ok')
+    batches=[{'id':'dead','race_date':'2026-11-15','track':'Donald',
+              'race_number':5,'source_form_payload':{'distance':'1200m'}}]
+    features=[{'batch_id':'dead','horse':'A','horse_key':'a','barrier':1},
+              {'batch_id':'dead','horse':'B','horse_key':'b','barrier':2}]
+    results=[{'batch_id':'dead','result_sha256':'ok','result_payload':{
+        'placings':[{'name':'A','position':1,'scratched':False},
+                    {'name':'B','position':1,'scratched':False}]}}]
+    detail,summary,issues,races=build_historical(batches,features,results)
+    assert detail.empty
+    assert summary.empty
+    assert 'EXCLUDED_JOINT_FIRST_FROM_SINGLE_WINNER_BARRIER_RESEARCH' in set(issues.issue)
+    assert races.iloc[0].winner_count==2
