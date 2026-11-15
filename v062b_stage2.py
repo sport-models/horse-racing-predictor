@@ -237,6 +237,15 @@ def render(secret):
         st.markdown('**Segments: field size, distance, venue**')
         st.dataframe(summary[~summary.segment_type.eq('OVERALL')], hide_index=True,
                      use_container_width=True)
+    st.metric('Earlier Stage 1 exclusions / issue rows', len(prior_issues))
+    if not prior_issues.empty:
+        with st.expander('Stage 1 eligibility exclusions — retained separately'):
+            st.dataframe(prior_issues, hide_index=True, use_container_width=True)
+            st.download_button('Export Stage 1 exclusions for this cohort',
+                               prior_issues.to_csv(index=False).encode('utf-8'),
+                               file_name='v062b_stage2_prior_exclusions_' +
+                               ('historical' if cohort == HISTORICAL else 'prospective') + '.csv',
+                               mime='text/csv', key='v062b_stage2_prior_exclusions')
     if not issues.empty:
         st.warning('Some races excluded or lack valid original scores for quality matching.')
         st.dataframe(issues, hide_index=True, use_container_width=True)
