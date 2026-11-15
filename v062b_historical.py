@@ -53,6 +53,8 @@ def build_historical(batches, features, results):
                 'cohort':COHORT,'batch_id':bid,'race_date':str(b.get('race_date'))[:10],
                 'track':b.get('track'),'race_number':b.get('race_number'),
                 'horse':feature.get('horse'),'barrier':barrier,'distance_m':distance,
+                'research_rank':feature.get('model_rank'),
+                'research_model_score':feature.get('model_score'),
                 'actual_starters':len(starters),
                 'won':int(integer(result.get('position'))==1),
                 'uniform_expected_win':1/len(starters),
