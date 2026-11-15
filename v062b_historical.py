@@ -30,7 +30,7 @@ def build_historical(batches, features, results):
             issues.append({'batch_id':bid,'issue':'MISSING_PLACINGS'})
             continue
         starters={canonical(p.get('name')):p for p in placings
-                  if isinstance(p,dict) and p.get('scratched') is False}
+                  if isinstance(p,dict) and p.get('scratched') is not True}
         indexed={canonical(x.get('horse_key') or x.get('horse')):x for x in f}
         if not starters or len(starters)!=eligible[bid]['actual_starters'] or set(starters)-set(indexed):
             issues.append({'batch_id':bid,'issue':'STARTER_COVERAGE_MISMATCH'})
