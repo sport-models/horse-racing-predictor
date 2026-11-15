@@ -1,3 +1,8 @@
+import v062b_stage21
+import v062b_barrier_lab
+import v062b_historical
+import v062b_stage2
+import v062b_metadata_audit
 import v061u_analysis_ui
 import v061t_missing_data_ui
 import v061s_feature_audit_ui
@@ -5,10 +10,6 @@ import v061r_class_validation
 import v061q_stayer_validation
 import v061p_race_type_lab
 import v061o_weight_lab
-import v062b_metadata_audit
-import v062b_stage2
-import v062b_historical
-import v062b_barrier_lab
 import v062a_relative_calibration
 import v061n_relative_lab
 import v061m_capture
@@ -668,6 +669,7 @@ def results_tab():
         result_lookup = v045_result_lookup.result_index(imported_results)
     except Exception as exc:
         st.warning(f'Imported placings unavailable: {exc}. Manual entry remains available.')
+        imported_results = []
         result_lookup = {}
     if pending:
         ready = sum(v045_result_lookup.lookup(b, result_lookup)['state'] == 'ready' for b in pending)
@@ -676,6 +678,16 @@ def results_tab():
         bet = st.selectbox('Select pending bet', pending, format_func=lambda b: f"{b['race_date']} {b['track']} R{b['race_number']} — {b['horse']} ({b['bet_type']}, {money(b['total_stake'])})")
         st.markdown("### Review & Manually Confirm Settlement")
         official = v045_result_lookup.lookup(bet, result_lookup)
+        # Read full official field: a joint-first finish must not receive a
+        # full-win payout from the ordinary settlement calculator.
+        same_race = [r for r in imported_results if
+                     v045_result_lookup.race_key(r) == v045_result_lookup.race_key(bet)]
+        joint_first = [r for r in same_race if r.get('result_status') == 'final'
+                       and r.get('scratched') is False
+                       and str(r.get('finishing_position')) == '1']
+        two_way_first = (len(joint_first) == 2 and
+                         len(same_race) > 0 and
+                         all(r.get('result_status') == 'final' for r in same_race))
         if official['state'] == 'ready':
             label = 'SCRATCHED' if official['scratched'] else f"{official['position']}"
             st.success(f'Imported official result: {label}. Bet remains Pending until you confirm settlement.')
@@ -753,6 +765,11 @@ def results_tab():
             help="Use for deductions, dead heats or other adjustments."
         )
 
+        if two_way_first:
+            st.warning('Official two-way dead heat for FIRST: ' +
+                       ', '.join(str(r.get('horse') or '') for r in joint_first) +
+                       '. Win and each-way returns may be reduced under bookmaker '
+                       'dead-heat rules. Verify the actual bookmaker settlement.')
         if manual_override:
             payout = st.number_input(
                 "Actual Bookmaker Return ($)",
@@ -812,6 +829,17 @@ def results_tab():
                     "reissued by the bookmaker must be recorded separately; do not treat it as cash.")
 
         can_settle = official['state'] not in ('ambiguous', 'invalid')
+        if two_way_first and not scratched and bet_type in ('Win', 'Each Way') and position == 1:
+            if not manual_override:
+                st.error('Dead-heat winner: enable manual payout override and '
+                         'enter the actual bookmaker-settled return before saving.')
+                can_settle = False
+            else:
+                confirmed_dead_heat_payout = st.checkbox(
+                    'I verified this dead-heat payout against the bookmaker statement',
+                    key='v045_dead_heat_payout_verified_' + str(bet['id']))
+                if not confirmed_dead_heat_payout:
+                    can_settle = False
 
         if not scratched and position == 0:
             st.warning("Enter the finishing position.")
@@ -1748,6 +1776,8 @@ with t5:
     v062b_metadata_audit.render(secret)
     st.divider()
     v062b_stage2.render(secret)
+    st.divider()
+    v062b_stage21.render(secret)
     st.divider()
     v061n_relative_lab.render(secret)
     st.divider()
