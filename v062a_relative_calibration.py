@@ -47,7 +47,7 @@ def evaluate(shadows, races):
     for col in CANDIDATES:
         p = merged[col]
         merged['brier_' + col] = (p - y) ** 2
-        merged['logloss_' + col] = -(y * p.map(math.log) + (1 - y) * (1 - p).map(math.log1p).mul(-1))
+        merged['logloss_' + col] = -(y * p.map(math.log) + (1 - y) * p.map(lambda value: math.log1p(-value)))
     metrics = []
     for col in CANDIDATES:
         metrics.append({
