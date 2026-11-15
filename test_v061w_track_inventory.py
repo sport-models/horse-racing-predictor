@@ -3,7 +3,7 @@ import pandas as pd
 from v061w_track_inventory import (
     build_locked_inventory, summarise_locked_inventory, prediction_status,
     merge_locked_with_evaluated_metrics, legacy_only_saved_batches,
-    build_result_join_diagnostics,
+    build_result_join_diagnostics, result_import_reconciliation,
 )
 
 
@@ -155,3 +155,33 @@ def test_imported_results_are_not_equivalent_to_evaluable_results():
     assert diagnostics.loc[0, "diagnosis"] == "OFFICIAL_RESULT_INTEGRITY_REVIEW"
     assert diagnostics.loc[1, "diagnosis"] == "ARCHIVE_OR_TIMING_EVIDENCE_REVIEW"
     assert diagnostics["imported_result_rows"].tolist() == [1, 1]
+
+
+def test_imported_result_reconciliation_shows_same_day_unmatched_keys_and_other_dates():
+    visible = pd.DataFrame([_evaluated("a", 1, "NO_FINAL_RESULTS", "Moe")])
+    results = [
+        {"race_date": "2026-11-15", "track": "MOE", "race_number": 1,
+         "result_status": "final"},
+        {"race_date": "2026-11-15", "track": "Wyong", "race_number": 2,
+         "result_status": "final"},
+        {"race_date": "2026-11-14", "track": "Moe", "race_number": 1,
+         "result_status": "final"},
+    ]
+    by_race, by_date = result_import_reconciliation(
+        visible, results, "2026-11-15", "2026-11-15")
+    assert len(by_race) == 2
+    assert by_race["matches_selected_locked_race"].tolist() == [True, False]
+    assert by_date["race_date"].tolist() == ["2026-11-15", "2026-11-14"]
+    assert by_date["imported_runner_rows"].tolist() == [2, 1]
+
+
+def test_reconciliation_reports_no_same_day_results_when_only_old_dates_exist():
+    visible = pd.DataFrame([_evaluated("a", 1, "NO_FINAL_RESULTS")])
+    results = [
+        {"race_date": "2026-11-14", "track": "Moe", "race_number": 1,
+         "result_status": "final"},
+    ]
+    by_race, by_date = result_import_reconciliation(
+        visible, results, "2026-11-15", "2026-11-15")
+    assert by_race.empty
+    assert len(by_date) == 1
