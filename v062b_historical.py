@@ -9,8 +9,11 @@ COHORT='HISTORICAL_RESEARCH_POST_RACE_RETRIEVAL'
 def build_historical(batches, features, results):
     from v061b_historical import build_reports, canonical, digest, integer
     reports=build_reports(batches,features,results)
-    eligible={str(r['batch_id']):r for r in reports['races']
-              if r['status']=='EVALUABLE_RETROSPECTIVE_RESEARCH'}
+    race_table=reports['races']
+    if not isinstance(race_table,pd.DataFrame):
+        raise TypeError('Historical build_reports races must be a DataFrame')
+    eligible={str(row['batch_id']):row for row in race_table.to_dict('records')
+              if row['status']=='EVALUABLE_RETROSPECTIVE_RESEARCH'}
     by_batch={}
     for f in features:
         by_batch.setdefault(str(f.get('batch_id')),[]).append(f)
