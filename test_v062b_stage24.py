@@ -139,7 +139,7 @@ def test_no_outcomes_or_external_source_scores_are_used():
     a["winning_horses"]=["Horse B"]
     a["result_status"]="final"
     races,runners,_,issues=build_coverage([a])
-    assert not issues.empty if False else True
+    assert issues.empty
     assert "won" not in runners.columns
     assert "finishing_position" not in runners.columns
     assert "outcome" not in races.columns
