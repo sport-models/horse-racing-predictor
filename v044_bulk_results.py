@@ -98,6 +98,15 @@ def render(db_rows, db, secret):
                    'from the pending-final-results list.')
     if not pending:
         st.success('No eligible unimported races found.'); return
+    # Drop any selection retained from an earlier render that is now
+    # excluded. This happens BEFORE the multiselect widget is instantiated.
+    retained = st.session_state.get('v044_selected')
+    if isinstance(retained, list):
+        eligible_keys = {_race_key(r) for r in pending}
+        cleaned = [r for r in retained if _race_key(r) in eligible_keys]
+        if len(cleaned) != len(retained):
+            st.session_state['v044_selected'] = cleaned
+            st.info('Previously selected processed/abandoned races were removed.')
     selected = st.multiselect('Races to fetch (maximum 20 per batch)', pending,
                               default=pending[:min(10, len(pending))],
                               format_func=lambda r: f'{r[0]} — {r[1]} — R{r[2]}', key='v044_selected')
