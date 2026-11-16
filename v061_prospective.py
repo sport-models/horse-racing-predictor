@@ -404,8 +404,7 @@ def evaluate_one(archive, results):
               'model_version': archive.get('model_version'),
               'server_archived_at': archive.get('created_at'),
               'scheduled_start_utc': archive.get('scheduled_start_utc'),
-              'top1_won': None, 'top3_hit': None, 'joint_first_count': None,
-              'winning_horses': None, 'is_dead_heat_first': None,
+              'top1_won': None, 'top3_hit': None,
               'field_size': None, 'model_top1': None, 'market_favourite': None,
               'model_vs_market_same_horse': None, 'market_favourite_won': None,
               'market_bookmaker': None, 'random_top1_expected': None,
@@ -476,10 +475,7 @@ def evaluate_one(archive, results):
                     incomplete = True
             else:
                 incomplete = True
-    joint_winners = {horse for horse, pos in positions.items() if pos == 1}
-    # Two winners in official final results is a legitimate two-way dead heat.
-    # Zero winners or 3+ winners remain blocked for explicit source review.
-    if results and (incomplete or len(joint_winners) not in (1, 2)):
+    if results and (incomplete or sum(p == 1 for p in positions.values()) != 1):
         issues.append('INVALID_OR_INCOMPLETE_OFFICIAL_RESULTS')
     runner_rows = []
     if valid_ranks and results:
@@ -491,22 +487,13 @@ def evaluate_one(archive, results):
             active = sorted((r for r in ranks if canonical(r['horse']) in positions), key=lambda r: int(r['rank']))
             top = active[0]
             topkey = canonical(top['horse'])
-            winner_count = len(joint_winners)
-            drawn = min(3, len(positions))
-            # P(at least one joint winner in 3 random picks) without replacement.
-            miss = (math.comb(len(positions) - winner_count, drawn) /
-                    math.comb(len(positions), drawn)
-                    if drawn <= len(positions) - winner_count else 0.0)
+            winner = next(k for k, pos in positions.items() if pos == 1)
             output.update(field_size=len(positions), model_top1=top['horse'],
-                          top1_won=topkey in joint_winners,
-                          top3_hit=any(canonical(r['horse']) in joint_winners for r in ranks
+                          top1_won=topkey == winner,
+                          top3_hit=any(canonical(r['horse']) == winner for r in ranks
                                        if int(r['rank']) <= 3),
-                          joint_first_count=winner_count,
-                          winning_horses=[r['horse'] for r in active
-                                         if canonical(r['horse']) in joint_winners],
-                          is_dead_heat_first=(winner_count == 2),
-                          random_top1_expected=winner_count/len(positions),
-                          random_top3_expected=1 - miss)
+                          random_top1_expected=1/len(positions),
+                          random_top3_expected=min(3, len(positions))/len(positions))
             # Capture original rank #1 scratch separately; do not claim replacement was a live bet.
             raw_top = min(ranks, key=lambda r: int(r['rank']))
             output['original_rank1_horse'] = raw_top['horse']
@@ -524,7 +511,7 @@ def evaluate_one(archive, results):
             if m_issue is None:
                 fav_key = min(prices, key=prices.get)
                 output['market_favourite'] = next(r['horse'] for r in active if canonical(r['horse']) == fav_key)
-                output['market_favourite_won'] = fav_key in joint_winners
+                output['market_favourite_won'] = fav_key == winner
                 output['model_vs_market_same_horse'] = topkey == fav_key
             for r in ranks:
                 h = canonical(r['horse'])
@@ -534,31 +521,12 @@ def evaluate_one(archive, results):
                     'horse': r['horse'], 'saved_rank': int(r['rank']), 'saved_score': r.get('score'),
                     'scratched': h in scratched, 'finished_position': positions.get(h),
                     'won': positions.get(h) == 1, 'active': h in positions,
-                    'joint_first_count': winner_count,
                     'selected_market_bookmaker': market_book,
                     'market_win_odds': prices.get(h) if prices else None,
                     'selection_is_retroactive_if_top1_scratched': output['original_rank1_scratched'],
                 })
     output['status'] = 'EVALUABLE_PROVISIONAL' if not issues else '|'.join(sorted(set(issues)))
     return output, sorted(set(issues)), runner_rows
-
-
-def simulated_win_profit_units(won, odds, joint_first_count):
-    """One-unit hypothetical WIN bet, with standard fractional dead-heat settlement.
-
-    A two-way dead heat pays on half the original stake if the selection
-    is one of the joint winners; the other half loses. Never uses current
-    or starting odds in place of the saved at-lock price. Actual settled
-    bookmaker payouts remain separate.
-    """
-    try:
-        count = int(joint_first_count)
-        price = float(odds)
-    except (ValueError, TypeError, OverflowError) as exc:
-        raise ValueError('Missing or invalid simulated win inputs') from exc
-    if count not in (1, 2) or not math.isfinite(price) or price <= 1:
-        raise ValueError('Invalid winner count or saved win odds')
-    return float(price / count - 1) if won else -1.0
 
 
 def evaluate_archives(archives, runner_results):
@@ -865,7 +833,7 @@ def historical_saved_prediction_track_metrics(predictions, result_rows, prospect
                 continue
             winners = [x for x in result_matches
                        if not x.get('scratched') and str(x.get('finishing_position')) == '1']
-            if len(winners) not in (1, 2):
+            if len(winners) != 1:
                 skipped['invalid_winner'] += 1
                 continue
             starters = {canonical(x.get('horse_key') or x.get('horse')) for x in result_matches
@@ -874,13 +842,12 @@ def historical_saved_prediction_track_metrics(predictions, result_rows, prospect
             if not starters.issubset(predicted):
                 skipped['incomplete_field'] += 1
                 continue
-            joint_winners = {canonical(w.get('horse_key') or w.get('horse')) for w in winners}
+            winner = canonical(winners[0].get('horse_key') or winners[0].get('horse'))
             rank_by_horse = {canonical(x['horse']): int(x['model_rank']) for x in selected}
             rows.append({'track': key[1], 'race_date': key[0], 'race_number': key[2],
                          'batch_id': batch_id, 'field_size': len(starters),
-                         'joint_first_count': len(joint_winners),
-                         'top1_won': int(any(rank_by_horse.get(w) == 1 for w in joint_winners)),
-                         'top3_hit': int(any(rank_by_horse.get(w, 999) <= 3 for w in joint_winners))})
+                         'top1_won': int(rank_by_horse.get(winner) == 1),
+                         'top3_hit': int(rank_by_horse.get(winner, 999) <= 3)})
         except (KeyError, ValueError, TypeError):
             skipped['invalid_saved_batch'] += 1
     return pd.DataFrame(rows), dict(skipped)
@@ -892,7 +859,6 @@ def render_track_performance(secret, bets=None, predictions=None):
     st.subheader('🏇 Performance by track — actual vs simulated')
     st.caption('ACTUAL = your settled bet ledger. SIMULATED = hypothetical 1-unit '
                'win bets on original rank #1 using saved bookmaker odds. '
-               'Two-way dead heats use half-stake win settlement in the simulation. '
                'They are different populations and must not be compared as identical stakes.')
     try:
         client = archive_client(secret)
@@ -972,13 +938,7 @@ def render_track_performance(secret, bets=None, predictions=None):
             picks['odds'] = pd.to_numeric(picks['market_win_odds'], errors='coerce')
             picks = picks[picks['odds'].gt(1)].copy()
             if not picks.empty:
-                # Two-way dead heat: half the original stake wins at captured
-                # odds, half loses; net hypothetical 1u P/L = odds/2 - 1.
-                # Real settled bets remain a separate ledger.
-                picks['profit_units'] = [simulated_win_profit_units(won, price, count)
-                                         for won, price, count in zip(
-                                             picks['won'], picks['odds'],
-                                             picks['joint_first_count'])]
+                picks['profit_units'] = picks['won'].astype(float) * picks['odds'] - 1
                 sim = (picks.groupby('track', dropna=False)
                        .agg(simulated_bets=('batch_id', 'count'),
                             simulated_profit_units=('profit_units', 'sum')).reset_index())
