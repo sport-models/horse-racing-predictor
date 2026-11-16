@@ -1,6 +1,7 @@
 import v062b_stage21
 import v062b_stage22
 import v062b_stage23
+import v062b_stage24
 import v062b_barrier_lab
 import v062b_historical
 import v062b_stage2
@@ -1784,6 +1785,8 @@ with t5:
     v062b_stage22.render(secret)
     st.divider()
     v062b_stage23.render(secret)
+    st.divider()
+    v062b_stage24.render(secret)
     st.divider()
     v061n_relative_lab.render(secret)
     st.divider()
