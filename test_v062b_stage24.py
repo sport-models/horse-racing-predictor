@@ -103,7 +103,7 @@ def test_utc_schedule_validation_blocks_missing_or_after_start():
     later=archive(created="2026-11-17T00:42:00+00:00")
     naive=archive(received="2026-11-17T00:01:00",ranked="2026-11-17T00:02:00")
     for item in [later,naive]:
-        _,_,_,issues=inspect_archive(item)
+        _,_,_,_,issues=inspect_archive(item)
         assert "SCHEDULE_ORDER_NOT_PROVEN" in issues
 
 
