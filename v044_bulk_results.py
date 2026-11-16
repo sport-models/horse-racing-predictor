@@ -1,5 +1,6 @@
 """v0.4.4 opt-in bulk FormFav results importer. No betting or prediction writes."""
-from datetime import date, timedelta
+from datetime import date, timedelta, datetime
+from zoneinfo import ZoneInfo
 import time
 import requests
 import pandas as pd
@@ -8,7 +9,33 @@ from v042_results import URL, parse, earliest_batch, canonical, normalize_track
 
 
 def _race(p):
+    """Preserve the original track name for provider requests/display."""
     return (str(p['race_date'])[:10], str(p['track']), int(p['race_number']))
+
+
+def _race_key(row):
+    """Same identity across original prediction, runner result and abandoned ledger."""
+    if isinstance(row, tuple):
+        day, track, number = row
+    else:
+        day, track, number = _race(row)
+    return str(day)[:10], normalize_track(track), int(number)
+
+
+def _pending_races(predictions, result_rows, abandoned_rows, today):
+    """Pure, case-independent list of saved races awaiting results."""
+    cutoff = today - timedelta(days=30)
+    existing_keys = {_race_key(r) for r in result_rows}
+    abandoned_keys = {_race_key(r) for r in abandoned_rows}
+    by_key = {}
+    for prediction in predictions:
+        race = _race(prediction)
+        if cutoff <= date.fromisoformat(race[0]) <= today:
+            by_key.setdefault(_race_key(race), race)
+    pending = sorted((race for key, race in by_key.items()
+                      if key not in existing_keys and key not in abandoned_keys),
+                     key=lambda r: (r[0], normalize_track(r[1]), r[2]))
+    return pending, abandoned_keys
 
 
 def _fetch(race, api_key, predictions):
@@ -55,20 +82,20 @@ def render(db_rows, db, secret):
         existing_rows = db_rows('runner_results', columns='race_date,track,race_number', order=None)
     except Exception as exc:
         st.error(f'Could not read race records: {exc}'); return
-    cutoff = date.today() - timedelta(days=30)
-    existing = {_race(r) for r in existing_rows}
     try:
-        abandoned_rows = db_rows('abandoned_races', columns='race_date,track,race_number', order=None)
-        abandoned = {_race(r) for r in abandoned_rows}
+        abandoned_rows = db_rows('abandoned_races',
+                                 columns='race_date,track,track_key,race_number', order=None)
     except Exception as exc:
         st.error('Abandonment registry is missing or unreadable. Run migrate_v045_abandoned.sql '
                  'in Supabase SQL Editor before using the bulk importer; no writes performed. '+str(exc))
         return
-    races = sorted({_race(p) for p in predictions if cutoff <= date.fromisoformat(str(p['race_date'])[:10]) <= date.today()})
-    pending = [r for r in races if r not in existing and r not in abandoned]
+    today = datetime.now(ZoneInfo('Australia/Melbourne')).date()
+    pending, abandoned_keys = _pending_races(
+        predictions, existing_rows, abandoned_rows, today)
     st.metric('Saved races not yet imported (within 30 days)', len(pending))
-    if abandoned:
-        st.caption(f'{len(abandoned)} independently verified abandoned race(s) excluded from the pending-final-results list. Use the abandonment registry for review.')
+    if abandoned_keys:
+        st.caption(f'{len(abandoned_keys)} confirmed abandoned race(s) excluded '
+                   'from the pending-final-results list.')
     if not pending:
         st.success('No eligible unimported races found.'); return
     selected = st.multiselect('Races to fetch (maximum 20 per batch)', pending,
@@ -78,6 +105,11 @@ def render(db_rows, db, secret):
         st.session_state.pop('v044_preview', None)
         if not selected or len(selected) > 20:
             st.error('Select between 1 and 20 races.'); return
+        # Protect against stale multiselect values from before abandonment.
+        current_pending_keys = {_race_key(r) for r in pending}
+        if any(_race_key(r) not in current_pending_keys for r in selected):
+            st.error('A selected race was already processed or marked abandoned. '
+                     'Refresh the list before fetching.'); return
         previews, errors = [], []
         progress = st.progress(0)
         for i, race in enumerate(selected):
@@ -93,6 +125,16 @@ def render(db_rows, db, secret):
     if preview['errors']:
         st.warning(f"{len(preview['errors'])} race(s) blocked or unavailable. They will NOT be saved.")
         st.dataframe(pd.DataFrame(preview['errors']), hide_index=True, use_container_width=True)
+    # A preview can survive a rerun after a separate abandonment save.
+    # It is never eligible to write once any race is no longer pending.
+    pending_keys = {_race_key(r) for r in pending}
+    stale = [item for item in preview['items']
+             if _race_key(item['race']) not in pending_keys]
+    if stale:
+        st.session_state.pop('v044_preview', None)
+        st.warning('Results preview cleared because a race is now abandoned or '
+                   'already imported. Fetch the remaining eligible races again.')
+        return
     items = preview['items']
     if not items:
         st.info('No valid final race results to save.'); return
@@ -140,7 +182,7 @@ def render(db_rows, db, secret):
                     skipped.append(label)
                     continue
                 matching_abandoned = (db().table('abandoned_races').select('id')
-                                      .eq('race_date',race[0]).eq('track_key',race[1].strip().lower())
+                                      .eq('race_date',race[0]).eq('track_key',normalize_track(race[1]))
                                       .eq('race_number',race[2]).limit(1).execute().data)
                 if matching_abandoned:
                     skipped.append(label+' (abandoned)')
