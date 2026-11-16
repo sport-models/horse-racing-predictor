@@ -38,6 +38,9 @@ def validate_manual_abandonment(race, predicted_races, saved_result_races, prior
 
 def render(db_rows, db):
     st.subheader('🚫 v0.4.5 — Record Officially Abandoned Race')
+    flash = st.session_state.pop('v045_abandoned_flash', None)
+    if flash:
+        st.success(flash)
     st.caption('Select the race, confirm it was officially abandoned, then save. '
                'No placings, bets or locked predictions are changed.')
     try:
@@ -90,9 +93,14 @@ def render(db_rows, db):
                 raise ValueError('Final race results now exist: no abandonment saved')
             # Database UNIQUE and immutable trigger guard duplicates/races already recorded.
             db_client.table('abandoned_races').insert(record).execute()
-            st.success(f"Official abandonment recorded for {selected[0]} {selected[1]} R{selected[2]}. "
-                       'No bets auto-voided. Verify outstanding bets with your bookmaker.')
-            st.session_state.pop('v045_abandoned_checked',None)
+            # v0.4.4 appears ABOVE this section, so Streamlit had already
+            # rendered its old pending list earlier in this run. Trigger one
+            # fresh full-app run after the successful database insert.
+            st.session_state.pop('v044_preview', None)
+            st.session_state['v045_abandoned_flash'] = (
+                f"Official abandonment recorded for {selected[0]} {selected[1]} R{selected[2]}. "
+                "The bulk importer list has been refreshed. No bets auto-voided.")
+            st.rerun()
         except Exception as exc:
             st.error('Nothing overwritten. Abandonment save blocked or failed: '+str(exc))
     if official:
