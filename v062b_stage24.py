@@ -264,7 +264,7 @@ def render(secret):
         return
     a,b,c=st.columns(3)
     a.metric("Original archived races",len(races))
-    b.metric("Archived uns cored rankings".replace(" ",""),
+    b.metric("Archived unscored runners",
              int(runners.original_score.isna().sum()) if not runners.empty else 0)
     c.metric("Rejected original archive identities",int(races.status.eq(
         "REJECTED_FOR_COVERAGE").sum()) if not races.empty else 0)
