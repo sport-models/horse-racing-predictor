@@ -1,9 +1,8 @@
 """v0.4.5 abandoned-race recording. No invented placings, no bet changes."""
 from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
-from urllib.parse import urlparse
 import streamlit as st
-from v042_results import canonical, normalize_track
+from v042_results import normalize_track
 
 
 def melbourne_today():
@@ -15,42 +14,37 @@ def race_id(row):
             int(row['race_number']))
 
 
-def validate_manual_abandonment(race, evidence_url, evidence_note,
-                                predicted_races, saved_result_races, prior):
-    """Pure fail-closed validator; never authorise with API results inferred."""
+def validate_manual_abandonment(race, predicted_races, saved_result_races, prior):
+    """Pure fail-closed validation. A confirmed status, not invented placings."""
     from datetime import date as d
-    day,track,num = race
+    day, track, num = race
     day = d.fromisoformat(str(day)[:10])
+    key = race_id({'race_date': day, 'track': track, 'race_number': num})
     if day > melbourne_today():
         raise ValueError('A future race cannot be verified abandoned')
-    if race_id({'race_date':day,'track':track,'race_number':num}) not in predicted_races:
+    if key not in predicted_races:
         raise ValueError('No saved locked prediction found for selected race')
-    if race_id({'race_date':day,'track':track,'race_number':num}) in saved_result_races:
+    if key in saved_result_races:
         raise ValueError('Full runner results already exist; manual reconciliation required')
-    if race_id({'race_date':day,'track':track,'race_number':num}) in prior:
-        raise ValueError('Race already recorded abandoned; no update or duplicate allowed')
-    url = urlparse(evidence_url.strip())
-    if url.scheme != 'https' or not url.netloc or url.username or url.password:
-        raise ValueError('Official evidence must be a full HTTPS URL')
-    if len(evidence_note.strip()) < 12:
-        raise ValueError('Describe the official announcement in at least 12 characters')
-    return {'race_date':day.isoformat(),'track':track,
-            'track_key':normalize_track(track),'race_number':int(num),
-            'outcome':'ABANDONED','official_evidence_url':evidence_url.strip(),
-            'evidence_note':evidence_note.strip(),'reviewed_by':'MANUAL_REVIEW'}
-
+    if key in prior:
+        raise ValueError('Race already recorded abandoned; no duplicate allowed')
+    return {
+        'race_date': day.isoformat(), 'track': track, 'track_key': key[1],
+        'race_number': int(num), 'outcome': 'ABANDONED',
+        # Explicit reviewer attestation, not a claim that a source URL was captured.
+        'reviewed_by': 'USER_CONFIRMED_OFFICIAL_ABANDONMENT',
+        'official_evidence_url': None, 'evidence_note': None,
+    }
 
 def render(db_rows, db):
     st.subheader('🚫 v0.4.5 — Record Officially Abandoned Race')
-    st.caption('Separate from importing final placings. This marks a verified abandoned race '
-               'and excludes it from prospective win-rate/ROI denominators. '
-               'No results, bets or predictions are written or settled.')
+    st.caption('Select the race, confirm it was officially abandoned, then save. '
+               'No placings, bets or locked predictions are changed.')
     try:
         official = db_rows('abandoned_races',order=None)
     except Exception as exc:
-        st.warning('Abandonment registry is not installed or cannot be read. '
-                   'Run migrate_v045_abandoned.sql once in Supabase SQL Editor. '
-                   'No changes have been made. Details: '+str(exc))
+        st.warning('Abandonment registry unavailable. Run the v0.4.5 Supabase migrations '
+                   'before using this feature. No changes made. Details: '+str(exc))
         return
     try:
         predictions = db_rows('race_predictions',order='predicted_at')
@@ -72,27 +66,19 @@ def render(db_rows, db):
                             key='v045_abandoned_selected')
     if st.session_state.get('v045_abandoned_last_selected') != selected:
         # A previously ticked confirmation is NEVER valid for a different race.
-        for key in ('v045_abandoned_evidence_url','v045_abandoned_evidence_note',
-                    'v045_abandoned_checked','v045_abandoned_phrase'):
+        for key in ('v045_abandoned_checked',):
             st.session_state.pop(key,None)
         st.session_state['v045_abandoned_last_selected'] = selected
-    st.warning('Only use this for an OFFICIALLY CONFIRMED ABANDONMENT. '
-               'Do not record delayed, postponed, results-pending, or cancelled-before-start '
-               'races without verifying the actual race disposition.')
-    url = st.text_input('Official racing authority evidence URL (https://...)',
-                        key='v045_abandoned_evidence_url')
-    note = st.text_area('What does the official notice say? Include source and exact race.',
-                        key='v045_abandoned_evidence_note')
-    accepted = st.checkbox('I independently verified this exact race was officially abandoned '
-                           'and understand it cannot be edited or automatically settled.',
-                           key='v045_abandoned_checked')
-    phrase = st.text_input('Type ABANDONED to confirm this outcome',key='v045_abandoned_phrase')
-    if st.button('Record verified abandonment — immutable Supabase insert',
-                 disabled=not (accepted and phrase.strip()=='ABANDONED'),
-                 key='v045_abandoned_save',type='primary'):
+    st.warning('Confirm only when the racing authority has officially declared this '
+               'specific race abandoned — not when results are delayed, the meeting is '
+               'postponed, or the result is still pending.')
+    accepted = st.checkbox(
+        f'I confirm {selected[0]} — {selected[1]} Race {selected[2]} was officially abandoned',
+        key='v045_abandoned_checked')
+    if st.button('Save abandoned race',
+                 disabled=not accepted, key='v045_abandoned_save', type='primary'):
         try:
-            record=validate_manual_abandonment(
-                selected,url,note,archived,finished,already)
+            record=validate_manual_abandonment(selected,archived,finished,already)
             # Race-level recheck at write time: do not overwrite final placings.
             db_client=db()
             if any(normalize_track(row.get('track'))==record['track_key']
