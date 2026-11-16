@@ -14,8 +14,14 @@ import json
 
 import pandas as pd
 
-from v042_results import canonical, normalize_track
-from v062b_stage22 import archived_start_evidence, _locked_runner_metadata, digest
+import re
+from v062b_stage22 import archived_start_evidence, _locked_runner_metadata, digest, canonical
+
+
+def normalize_track(value):
+    """Local identity rule; isolated from legacy pytest module stubs."""
+    return re.sub(r'\s+', ' ', str(value or '').casefold().strip())
+
 from v062b_stage23 import v02_score_gates
 
 
