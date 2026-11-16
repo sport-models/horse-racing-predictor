@@ -1,33 +1,46 @@
-# v0.4.5 Officially abandoned races — deploy runbook
+# Abandoned races — simplified confirmation and safe deployment
 
-**Status: DRAFT / not yet deployed.** Sandbox and production share the same Supabase backend. Never use sandbox manual abandonment recording as if it were an isolated dry run.
+**Status: PR #7, draft, not deployed.** Sandbox and production use the same Supabase database. The existing migration has already been run by the user; the simple-confirmation schema upgrade must run before any app merge.
 
-## Why a dedicated table
+## Why the separate table?
 
-FormFav `/v1/results` can lack `resultStatus=final` for a race that was abandoned or never started. Inserting a fictitious losing position or marking all runners scratched to close the race would corrupt the official result dataset and prospective model metrics.
+`runner_results` records **individual official finishers**. For an abandoned race there is no finishing-position record to amend; adding a flag to `runner_results` would create artificial runner results, or require a fabricated placeholder row. `race_predictions` holds the locked *pre-race* prediction rows; updating them after abandonment would mutate historical prediction evidence. `abandoned_races` is a small race-level status ledger keyed by **date + track + race number**, not a duplicate result set.
 
-The new `abandoned_races` registry is intentionally **race-level only**. It never creates a `runner_results` placings row and never changes locked predictions, historical results or bets.
+## Existing SQL has already been run — one small follow-up
 
-## Required one-time migration
+Open `migrate_v045_abandoned_simple_confirmation.sql` in GitHub branch `fix-abandoned-race-status`; in Supabase SQL Editor run:
 
-1. In the shared Supabase project open **SQL Editor**.
-2. Open `migrate_v045_abandoned.sql` from PR #7; review and run it **once** before releasing the application code. It adds a new unique race-level table and protects against updates/deletes. The migration does **not** alter existing `runner_results`, `bets`, `race_predictions`, or research tables.
-3. Check the new `abandoned_races` table exists and is empty. The server-side Supabase role must be able to read and insert; browser/anonymous roles cannot.
-4. In Codespaces switch to `fix-abandoned-race-status` and run `python -m pytest -q`. Verify the full suite and test the UI using **preview / official evidence** only. **Do not click the final save button in sandbox** unless intending to write into shared production Supabase.
-5. Merge PR #7 only after migration and checks; confirm the live Streamlit instance pulled the merge.
+```sql
+alter table public.abandoned_races
+  alter column official_evidence_url drop not null,
+  alter column evidence_note drop not null;
+```
 
-## Real abandoned race workflow
+This makes the originally required evidence URL and description **optional**, without inserting any fake evidence or altering existing rows. The original full `migrate_v045_abandoned.sql` has also been updated to support future clean installs and reruns.
 
-1. `Race Results → v0.4.5 — Record Officially Abandoned Race`. Select the exact saved race within 30 days, with no existing final placings or abandoned marker.
-2. Check an authoritative racing-body notice or official announcement for **that race/date/meeting**; enter its full HTTPS URL and the exact reason/evidence statement. A race merely delayed or results pending is **not** verified abandoned.
-3. Explicitly tick the attestation, type `ABANDONED`, then click the insert action. This **writes to the shared Supabase database**. The record is immutable; mistakes require supervised reconciliation, not deletion/reimport.
-4. Race disappears from bulk pending list. Prospective `Today` will show `ABANDONED_OFFICIAL_MANUAL_VERIFICATION`, with `top1_won/top3_hit=NULL`; the race is excluded from hit-rate, simulated unit ROI and paired market denominators.
-5. If a race was abandoned after wagers were accepted, separately check bookmaker policy and manually review/refund/void affected `Pending` bets. **No auto-settlement or auto-void** is performed. The bet tracker remains the source of actual settlements.
+## Reopening the sandbox
 
-## Safety limits
+The SQL migration **does not start Codespaces or deploy application code**. In GitHub Codespaces, start/resume your existing Codespace and open its terminal. Stop an existing Streamlit process if necessary, then:
 
-- Both the bulk and single result importers check the registry before writing any official per-runner finishers.
-- A saved runner-results row blocks later manual abandonment and a saved abandoned marker blocks new final-result inserts. Any unexpected cross-table conflict is flagged in prospective evaluation, not silently resolved.
-- This system uses a user attestation and evidence URL, **not automatically independent official-source verification**. It must not turn an uncertain race into a settled abandoned outcome.
-- Racing date is evaluated in Australia/Melbourne to avoid UTC date-boundary errors.
-- Before the migration is installed, the affected importer shows a clear error rather than silently recording a race with guessed placements.
+```bash
+git fetch origin
+git switch fix-abandoned-race-status
+git pull --ff-only origin fix-abandoned-race-status
+python -m pytest -q
+python -m streamlit run app.py --server.address 0.0.0.0 --server.port 8501
+```
+
+Use the Codespaces **PORTS** panel to open forwarded port **8501**. If no preview appears, run `curl -I http://localhost:8501/_stcore/health` in Codespaces and inspect terminal errors. No assumption about what caused the inaccessible sandbox without its precise error message.
+
+## New simplified one-checkbox workflow
+
+In Race Results, under **v0.4.5 — Record Officially Abandoned Race**:
+1. Select the race from saved but unprocessed races.
+2. Tick one checkbox confirming that **this exact race was officially abandoned**. Never use it for postponed, results-pending or merely delayed races.
+3. Click **Save abandoned race**.
+
+The record saves date, track, race number, outcome, reviewer attestation and server timestamp; URL and note are NULL if not collected. Manual confirmation is honestly labelled — it does **not** certify that an independent official URL was retrieved. One row per race, immutable (no update/delete), no changes to runner placings, locked predictions, bet records or score algorithm. Bulk and single final-results importers block races in the registry; the prospective dashboard excludes the race from win hit rate and ROI denominators.
+
+### Deployment gate
+
+Full Python CI tests must pass. Test race selection/display in Codespaces without clicking Save; the sandbox shares live Supabase. After the optional-evidence migration and live app integration verification, PR #7 can be reviewed for merge into main. Keep v0.6.2B Stage 2.2 PR #4 separate. **No automatic bookmaker bet voiding:** outstanding wagers require independent bookmaker settlement verification.
