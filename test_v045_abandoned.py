@@ -1,6 +1,7 @@
 from datetime import timedelta
 import pytest
 from v045_abandoned import validate_manual_abandonment, race_id, melbourne_today
+from v044_bulk_results import _race_key, _pending_races
 # Bind real function at collection time before legacy tests stub sys.modules.
 from v061_prospective import evaluate_archives
 
@@ -80,3 +81,48 @@ def test_conflict_between_abandoned_race_and_final_results_blocks_metrics():
     assert race.top1_won is None
     assert report['summary'].iloc[0].abandoned_result_conflicts==1
     assert report['summary'].iloc[0].result_complete_provisional==0
+
+
+
+def test_bulk_excludes_abandoned_race_regardless_of_track_case():
+    today=melbourne_today()
+    d=today.isoformat()
+    locked=[
+        {'race_date':d,'track':'Hobart','race_number':2},
+        {'race_date':d,'track':'Hobart','race_number':3},
+        {'race_date':d,'track':'Moe','race_number':1},
+    ]
+    abandoned=[{'race_date':d,'track':'hobart','track_key':'hobart',
+                'race_number':2,'outcome':'ABANDONED'}]
+    imported=[{'race_date':d,'track':'moe','race_number':1}]
+    pending, known_abandoned = _pending_races(locked,imported,abandoned,today)
+    assert pending==[(d,'Hobart',3)]
+    assert (d,'hobart',2) in known_abandoned
+
+
+def test_bulk_case_insensitivity_covers_reverse_direction():
+    today=melbourne_today()
+    d=today.isoformat()
+    locked=[{'race_date':d,'track':'hobart','race_number':2}]
+    abandoned=[{'race_date':d,'track':'HOBART','race_number':2}]
+    pending,known_abandoned = _pending_races(locked,[],abandoned,today)
+    assert pending==[]
+    assert len(known_abandoned)==1
+
+
+def test_bulk_preserves_original_track_for_formfav_request():
+    today=melbourne_today()
+    d=today.isoformat()
+    locked=[{'race_date':d,'track':'Hobart','race_number':2}]
+    pending,_ = _pending_races(locked,[],[],today)
+    assert pending==[(d,'Hobart',2)]
+    assert _race_key(pending[0])==(d,'hobart',2)
+
+
+def test_bulk_existing_final_result_excluded_across_case():
+    today=melbourne_today()
+    d=today.isoformat()
+    locked=[{'race_date':d,'track':'Hobart','race_number':2}]
+    final=[{'race_date':d,'track':'hobart','race_number':2}]
+    pending,_ = _pending_races(locked,final,[],today)
+    assert pending==[]
