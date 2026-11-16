@@ -188,6 +188,12 @@ def render(db_rows, db, secret):
             if existing:
                 st.error('Race already imported. No changes made.')
                 return
+            abandoned = (db().table('abandoned_races').select('id')
+                         .eq('race_date',race[0]).eq('track_key',normalize_track(race[1]))
+                         .eq('race_number',race[2]).limit(1).execute().data)
+            if abandoned:
+                st.error('Race is recorded as officially abandoned. No runner results may be inserted.')
+                return
             db().table('runner_results').insert(rows).execute()
             st.success(f'Saved {len(rows)} official runner results. Bets and predictions unchanged.')
             st.session_state.pop('v0421_preview', None)

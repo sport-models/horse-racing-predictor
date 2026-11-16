@@ -561,9 +561,14 @@ def simulated_win_profit_units(won, odds, joint_first_count):
     return float(price / count - 1) if won else -1.0
 
 
-def evaluate_archives(archives, runner_results):
-    """Return race, runner, market, evidence, summary tables. Never modify DB."""
+def evaluate_archives(archives, runner_results, abandoned_races=None):
+    """Return race, runner, market, evidence, summary tables. Never modify DB.
+
+    Abandoned status is recorded separately from runner placings: no false losses.
+    """
     results = _result_index(runner_results)
+    abandoned = {race_key(r):r for r in (abandoned_races or [])
+                 if str(r.get('outcome')) == 'ABANDONED'}
     race_rows, runner_rows, evidence_rows = [], [], []
     seen = set()
     for archive in sorted(archives, key=lambda row: str(row.get('created_at') or '')):
@@ -573,6 +578,23 @@ def evaluate_archives(archives, runner_results):
             continue
         seen.add(k)
         row, issues, runners = evaluate_one(archive, results.get(k, []))
+        if k in abandoned:
+            if results.get(k):
+                # Never hide contradictory result records behind an abandoned marker.
+                row['status'] = 'CONFLICT_ABANDONED_AND_RUNNER_RESULTS'
+                row['top1_won'] = None
+                row['top3_hit'] = None
+                runners = []
+                issues.append('CONFLICT_ABANDONED_AND_RUNNER_RESULTS')
+            else:
+                row['status'] = 'ABANDONED_OFFICIAL_MANUAL_VERIFICATION'
+                row['abandonment_evidence_url'] = abandoned[k].get('official_evidence_url')
+                row['top1_won'] = None
+                row['top3_hit'] = None
+                row['market_favourite_won'] = None
+                row['joint_first_count'] = None
+                issues = [issue for issue in issues if issue != 'NO_FINAL_RESULTS']
+                issues.append('ABANDONED_EXCLUDED_FROM_WIN_AND_ROI_METRICS')
         race_rows.append(row)
         runner_rows.extend(runners)
         for issue in issues:
@@ -589,7 +611,10 @@ def evaluate_archives(archives, runner_results):
     eligible = races[races['status'].eq('EVALUABLE_PROVISIONAL')] if not races.empty else races
     paired = eligible[eligible['market_issue'].isna() & eligible['market_favourite'].notna()].copy() if not eligible.empty else eligible.copy()
     summary = pd.DataFrame([{
-        'version': VERSION, 'archived_races': len(races), 'result_complete_provisional': len(eligible),
+        'version': VERSION, 'archived_races': len(races),
+        'abandoned_races': int(races['status'].eq('ABANDONED_OFFICIAL_MANUAL_VERIFICATION').sum()) if not races.empty else 0,
+        'abandoned_result_conflicts': int(races['status'].eq('CONFLICT_ABANDONED_AND_RUNNER_RESULTS').sum()) if not races.empty else 0,
+        'result_complete_provisional': len(eligible),
         'paired_saved_market_races': len(paired),
         'model_top1_wins': int(eligible['top1_won'].sum()) if not eligible.empty else 0,
         'model_top1_rate': float(eligible['top1_won'].mean()) if not eligible.empty else None,
@@ -752,6 +777,9 @@ def prospective_dashboard(report):
     cols = st.columns(4)
     cols[0].metric('Archived races', total)
     cols[1].metric('Evaluable results', len(evaluated))
+    abandoned_count = int(races['status'].eq('ABANDONED_OFFICIAL_MANUAL_VERIFICATION').sum()) if not races.empty else 0
+    if abandoned_count:
+        st.info(f'{abandoned_count} officially verified abandoned race(s) excluded from win-rate and ROI denominators.')
     cols[2].metric('Top-ranked winners', f"{int(evaluated['top1_won'].sum())}/{len(evaluated)}" if len(evaluated) else '—')
     cols[3].metric('Paired market races', len(paired))
     st.progress(min(total / 200, 1.0), text=f'{total} / 200 archived races (collection target, not a promotion threshold)')
@@ -898,7 +926,8 @@ def render_track_performance(secret, bets=None, predictions=None):
         client = archive_client(secret)
         archives = _read_all(client, TABLE, order='created_at')
         results = _read_all(client, 'runner_results')
-        report = evaluate_archives(archives, results)
+        abandoned = _read_all(client, 'abandoned_races')
+        report = evaluate_archives(archives, results, abandoned)
     except Exception as exc:
         st.warning('Prospective track metrics unavailable: ' + str(exc))
         return
@@ -1095,7 +1124,8 @@ def render(secret):
     if st.button('Run v0.6.1 forward evidence audit', key='v061_run'):
         try:
             results = _read_all(client, 'runner_results', order=None)
-            report = evaluate_archives(archives, results)
+            abandoned = _read_all(client, 'abandoned_races', order=None)
+            report = evaluate_archives(archives, results, abandoned)
         except Exception as exc:
             st.error('Read-only evaluation failed: '+str(exc))
             return
