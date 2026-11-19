@@ -21,6 +21,7 @@ import requests
 import streamlit as st
 
 from v042_results import canonical, normalize_track
+from v046_venue_odds import capture_prelock_odds, odds_capture_inventory
 from v057f_odds_integrity import bookmaker_id, iso_timestamp, valid_price
 
 VERSION = 'v0.6.1-prospective-evidence'
@@ -213,23 +214,12 @@ def prepare_live_snapshot(*, race_date, track, track_slug, race_number, formfav_
     if generated_at >= scheduled:
         raise ValueError('Ranking generated at/after scheduled start. Prospective save blocked.')
 
-    quotes, odds_completed, odds_status = {}, None, 'NO_ODDS_KEY'
-    if puntersedge_key:
-        try:
-            odds_data = puntersedge_request('/racing/next-to-go', puntersedge_key,
-                                            {'country': 'AU', 'categories': 'horse',
-                                             'include_unresolved': 'true', 'venue': track,
-                                             'num_races': 20})
-            odds_completed = utc_now()
-            event = odds_find_race(odds_data, str(race_date)[:10], track, number)
-            if event is None:
-                odds_status = 'NO_UNIQUE_MATCHED_LIVE_EVENT'
-            else:
-                for horse in df['Horse']:
-                    quotes[str(horse)] = odds_runner_quotes(event, str(horse))
-                odds_status = 'CAPTURED' if odds_completed < scheduled else 'ODDS_AFTER_SCHEDULE'
-        except Exception as exc:
-            odds_status = f'ODDS_FETCH_FAILED:{type(exc).__name__}'  # No API secrets in archive.
+    quotes, odds_completed, odds_status, odds_capture_diagnostic = capture_prelock_odds(
+        race_date=str(race_date)[:10], track=track, race_number=number,
+        scheduled=scheduled, runner_names=df['Horse'].tolist(),
+        api_key=puntersedge_key, puntersedge_request=puntersedge_request,
+        odds_runner_quotes=odds_runner_quotes, odds_find_race=odds_find_race,
+        utc_now=utc_now)
     if utc_now() >= scheduled:
         raise ValueError('Scheduled start elapsed before snapshot could be saved; no lock permitted.')
     engine_hash = _scorer_hash(score_runner, recent_form_score, win_rate, as_number)
@@ -262,6 +252,7 @@ def prepare_live_snapshot(*, race_date, track, track_slug, race_number, formfav_
         'form_response_raw': form_response,
         'form_response_sha256': digest(form_response), 'rankings': rankings,
         'odds_quotes': quotes,
+        'odds_capture_diagnostic': odds_capture_diagnostic,
         'source_times': {'meeting_request_started_utc': utc_string(meeting_started),
                          'meeting_response_received_utc': utc_string(meeting_completed),
                          'form_request_started_utc': utc_string(form_started),
@@ -1134,6 +1125,16 @@ def render(secret):
         st.warning('PROMOTION GATE: CLOSED until independent actual-off time AND input point-in-time evidence '
                    'are verified. A scheduled start alone is not official actual-off verification.')
         st.dataframe(report['races'], hide_index=True, use_container_width=True)
+        st.markdown('**Immutable bookmaker-capture diagnostics (original archives only)**')
+        capture_diagnostics = odds_capture_inventory(archives)
+        failed_captures = capture_diagnostics[
+            capture_diagnostics['original_bookmaker_capture_status'].ne('CAPTURED')]
+        if not failed_captures.empty:
+            st.dataframe(failed_captures, hide_index=True, use_container_width=True)
+        st.download_button('Download stored bookmaker-capture diagnostics CSV',
+            capture_diagnostics.to_csv(index=False).encode('utf-8'),
+            file_name='v061_odds_capture_diagnostics.csv', mime='text/csv',
+            key='v061_odds_capture_diagnostics_csv')
         for name, frame in report.items():
             st.download_button('Download v0.6.1 '+name+' CSV',
                                frame.to_csv(index=False).encode('utf-8'),
