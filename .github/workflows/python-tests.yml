@@ -1,6 +1,8 @@
 name: Full Python regression suite
 
 on:
+  push:
+    branches: [v062b-barrier-bias-research]
   pull_request:
     branches: [main]
   workflow_dispatch:

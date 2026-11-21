@@ -1,0 +1,49 @@
+import pandas as pd
+from v062b_historical import build_historical, COHORT
+
+
+def test_historical_cohort_separated_and_missing_distance_preserved(monkeypatch):
+    import v061b_historical as h
+    monkeypatch.setattr(h,'build_reports',lambda b,f,r:{
+        'races':pd.DataFrame([{'batch_id':'a','status':'EVALUABLE_RETROSPECTIVE_RESEARCH','actual_starters':2}])})
+    monkeypatch.setattr(h,'digest',lambda p:'ok')
+    batches=[{'id':'a','race_date':'2026-10-01','track':'Seymour','race_number':1,'source_form_payload':{'distance':'1200m'}}]
+    features=[{'batch_id':'a','horse':'A','horse_key':'a','barrier':1,'model_rank':1,'model_score':67.0},
+              {'batch_id':'a','horse':'B','horse_key':'b','barrier':2,'model_rank':2,'model_score':62.0}]
+    results=[{'batch_id':'a','result_sha256':'ok','result_payload':{
+        'placings':[{'name':'A','position':1,'scratched':False},
+                    {'name':'B','position':2,'scratched':False}]}}]
+    detail,summary,issues,_=build_historical(batches,features,results)
+    assert len(detail)==2
+    assert (detail.distance_m==1200).all()
+    assert set(detail.research_rank)=={1,2}
+    assert set(detail.research_model_score)=={67.0,62.0}
+    assert set(detail.cohort)=={COHORT}
+    assert summary.expected_wins_uniform.sum()==1
+    assert set(summary.gate)=={'INSUFFICIENT_HISTORICAL_EXPOSURE'}
+    features[1]['barrier']=1
+    detail,_,issues,_=build_historical(batches,features,results)
+    assert detail.empty
+    assert 'INCOMPLETE_OR_DUPLICATE_BARRIER_EXPOSURE' in set(issues.issue)
+
+
+def test_historical_two_joint_first_winners_explicitly_excluded(monkeypatch):
+    import v061b_historical as h
+    monkeypatch.setattr(h,'build_reports',lambda b,f,r:{
+        'races':pd.DataFrame([{
+            'batch_id':'dead','status':'EVALUABLE_RETROSPECTIVE_RESEARCH',
+            'actual_starters':2, 'winner_count':2,
+            'winning_horses':'A | B'}])})
+    monkeypatch.setattr(h,'digest',lambda p:'ok')
+    batches=[{'id':'dead','race_date':'2026-11-15','track':'Donald',
+              'race_number':5,'source_form_payload':{'distance':'1200m'}}]
+    features=[{'batch_id':'dead','horse':'A','horse_key':'a','barrier':1},
+              {'batch_id':'dead','horse':'B','horse_key':'b','barrier':2}]
+    results=[{'batch_id':'dead','result_sha256':'ok','result_payload':{
+        'placings':[{'name':'A','position':1,'scratched':False},
+                    {'name':'B','position':1,'scratched':False}]}}]
+    detail,summary,issues,races=build_historical(batches,features,results)
+    assert detail.empty
+    assert summary.empty
+    assert 'EXCLUDED_JOINT_FIRST_FROM_SINGLE_WINNER_BARRIER_RESEARCH' in set(issues.issue)
+    assert races.iloc[0].winner_count==2
