@@ -71,21 +71,40 @@ def _request_json(url, api_key, params):
 
 
 def _race_schedule(meetings_payload, track, number, *, get_items, get_value, meeting_name):
+    """Match one AU race only; reject same-name unknown-country candidates.
+
+    Provider may return overseas meetings despite country=au request.
+    Never turn a missing country into a presumed Australian identity.
+    """
     normalized_track = normalize_track(str(track).replace('-', ' ').replace('_', ' '))
     matches = []
+    unknown_country = 0
     for meeting in get_items(meetings_payload, 'meetings'):
         if not isinstance(meeting, dict):
             continue
         venue = normalize_track(str(meeting_name(meeting)).replace('-', ' ').replace('_', ' '))
         if venue != normalized_track:
             continue
-        for race in get_items(meeting, 'races'):
-            if not isinstance(race, dict):
-                continue
-            if safe_race_number(get_value(race, 'raceNumber', 'number')) == number:
-                matches.append(race)
+        same_number = [
+            race for race in get_items(meeting, 'races')
+            if isinstance(race, dict)
+            and safe_race_number(get_value(race, 'raceNumber', 'number')) == number
+        ]
+        if not same_number:
+            continue
+        country = str(get_value(meeting, 'country', 'countryCode', default='') or '').strip().casefold()
+        if country in ('au', 'aus', 'australia'):
+            matches.extend(same_number)
+        elif not country:
+            unknown_country += len(same_number)
+        # Explicit non-AU countries, including GB, are never candidates.
+    if unknown_country:
+        raise ValueError(
+            f'Country missing for {unknown_country} same-named scheduled race(s); '
+            'cannot certify Australian race identity; saving blocked')
     if len(matches) != 1:
-        raise ValueError(f'Expected one matching live scheduled race, found {len(matches)}; saving blocked')
+        raise ValueError(
+            f'Expected one matching AU live scheduled race, found {len(matches)}; saving blocked')
     schedule_raw = matches[0].get('startTime')
     schedule = iso_timestamp(schedule_raw)
     if schedule is None:

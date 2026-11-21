@@ -103,7 +103,7 @@ class ProspectiveTests(unittest.TestCase):
             {'name': 'C Runner', 'test_score': 70, 'scratched': False},
         ]
         self.form = {'runners': self.data}
-        self.meets = {'meetings': [{'track': 'Flemington', 'races': [
+        self.meets = {'meetings': [{'track': 'Flemington', 'country': 'AU', 'races': [
             {'raceNumber': 1, 'startTime': self.schedule}]}]}
         self.book = {'quotes': {
             'A Mare': [{'bookmaker':'sportsbet','win':3.1,'place':1.3,
