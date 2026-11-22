@@ -34,6 +34,7 @@ import v057a_market_benchmark
 import v045_result_lookup
 import v044_bulk_results
 import v043_full_field
+import v0422_manual_results
 import v042_results
 import formfav_results_probe
 import v04_validation
@@ -1736,6 +1737,8 @@ with t3:
     results_tab()
     st.divider()
     v042_results.render(db_rows, db, secret)
+    st.divider()
+    v0422_manual_results.render(db, db_rows, secret)
     st.divider()
     v044_bulk_results.render(db_rows, db, secret)
     st.divider()
