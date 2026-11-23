@@ -35,6 +35,7 @@ import v045_result_lookup
 import v044_bulk_results
 import v043_full_field
 import v0422_manual_results
+import v0423_bulk_results
 import v042_results
 import formfav_results_probe
 import v04_validation
@@ -111,6 +112,9 @@ def db_rows(table, columns='*', order='created_at', descending=True):
         q = db().table(table).select(columns)
         if order:
             q = q.order(order, desc=descending)
+            # Stable tie-breaker avoids duplicated predictions across page boundaries.
+            if table == 'race_predictions' and order == 'predicted_at':
+                q = q.order('id', desc=descending)
         batch = q.range(offset, offset + 999).execute().data or []
         out.extend(batch)
         if len(batch) < 1000:
@@ -1739,6 +1743,8 @@ with t3:
     v042_results.render(db_rows, db, secret)
     st.divider()
     v0422_manual_results.render(db, db_rows, secret)
+    st.divider()
+    v0423_bulk_results.render(db(), db_rows, secret)
     st.divider()
     v044_bulk_results.render(db_rows, db, secret)
     st.divider()
