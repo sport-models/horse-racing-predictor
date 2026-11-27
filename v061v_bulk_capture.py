@@ -7,6 +7,7 @@ from datetime import datetime, timedelta, timezone
 import pandas as pd
 import streamlit as st
 import v061_prospective as prospective
+import v062b_stage26b3_lock_hook
 
 SAFETY_BUFFER = timedelta(minutes=5)
 
@@ -69,14 +70,17 @@ def run(meeting, races, race_date, *, api_key, puntersedge_key, db_client,
                                   prepared['bookmaker_quotes'],
                                   prepared['odds_snapshot_at'])
             try:
-                prospective.archive_locked_batch(db_client, batch, prepared)
+                receipt = prospective.archive_locked_batch(db_client, batch, prepared)
             except Exception as exc:
                 report.append({'Race': number, 'Status': 'UNVERIFIED', 'Reason': 'Legacy batch saved; archive failed: ' + str(exc), 'Batch': batch})
                 continue
-            report.append({'Race': number, 'Status': 'ARCHIVED', 'Reason': 'Fresh pre-scheduled snapshot; actual-off not certified', 'Batch': batch})
+            shadow_status, shadow_detail = v062b_stage26b3_lock_hook.attempt(db_client, receipt)
+            report.append({'Race': number, 'Status': 'ARCHIVED',
+                           'Reason': 'Fresh pre-scheduled snapshot; actual-off not certified',
+                           'Batch': batch, 'Shadow': shadow_status, 'Shadow detail': shadow_detail})
         except Exception as exc:
             report.append({'Race': number, 'Status': 'FAILED', 'Reason': str(exc), 'Batch': ''})
-    return pd.DataFrame(report, columns=['Race', 'Status', 'Reason', 'Batch'])
+    return pd.DataFrame(report, columns=['Race', 'Status', 'Reason', 'Batch', 'Shadow', 'Shadow detail'])
 
 
 def render(meeting, races, race_date, **dependencies):

@@ -20,6 +20,7 @@ import v057g_each_way_benchmark
 # v0.5.8 PROMO & FIELD SIZE INSTALLED
 import v061b_historical
 import v061_prospective
+import v062b_stage26b3_lock_hook
 import v061v_bulk_capture
 import v060_validation_hub
 import v059_score_separation
@@ -1307,6 +1308,13 @@ def analysis_tab():
                                  'Check the migration and service-role credentials. '
                                  'Do not backfill this as a verified pre-race snapshot.')
                     else:
+                        # Capture-only research sidecar. NEVER modifies the validated v0.2 lock.
+                        shadow_status, shadow_detail = v062b_stage26b3_lock_hook.attempt(
+                            v061_prospective.archive_client(secret), receipt)
+                        if shadow_status == 'FAILED':
+                            st.error('Stage 2.6B3 capture FAILED (original lock remains archived): ' + shadow_detail)
+                        else:
+                            st.info('Stage 2.6B3 capture: ' + shadow_status)
                         analysis['df'] = prepared['rankings_df']
                         analysis['race_data'] = prepared['payload']['form_response_raw']
                         st.success(f'✅ {len(prepared["rankings_df"])} freshly ranked runners saved '
