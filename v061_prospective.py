@@ -932,43 +932,51 @@ def render_track_performance(secret, bets=None, predictions=None):
                'win bets on original rank #1 using saved bookmaker odds. '
                'Two-way dead heats use half-stake win settlement in the simulation. '
                'They are different populations and must not be compared as identical stakes.')
+    # v061w_query_optimised_yesterday_v1
+    from datetime import timedelta
+    from v061w_track_query import earliest_archive_date, load_window, selected_window
+    today = utc_now().astimezone(ZoneInfo(DATE_ZONE)).date()
+    choice = st.radio('Meeting dates', ['Yesterday', 'Today', 'Date range', 'All dates'],
+                      horizontal=True, key='v061w_track_date_mode')
+    selected_range = None
+    if choice == 'Date range':
+        selected_range = st.date_input(
+            'Choose start and end dates',
+            value=(today - timedelta(days=7), today),
+            key='v061w_track_date_range')
+        if not isinstance(selected_range, (tuple, list)) or len(selected_range) != 2:
+            st.info('Select both the start and end date to display results.')
+            return
     try:
         client = archive_client(secret)
-        archives = _read_all(client, TABLE, order='created_at')
-        results = _read_all(client, 'runner_results')
-        abandoned = _read_all(client, 'abandoned_races')
+        start_date, end_date = selected_window(choice, today, selected_range)
+        query_start, query_end = start_date, end_date
+        if choice == 'All dates':
+            # Keep display filters unbounded for earlier (legacy) predictions,
+            # while choosing the earliest relevant date for bounded DB reads.
+            earliest = earliest_archive_date(client)
+            legacy_dates = [str(x.get('race_date'))[:10] for x in (predictions or [])
+                            if x.get('race_date')]
+            query_start = min(([earliest] if earliest else []) + legacy_dates,
+                              default=None)
+            query_end = today.isoformat()
+        if query_start is None:
+            archives, results, abandoned = [], [], []
+        else:
+            archives = load_window(client, TABLE, query_start, query_end)
+            results = load_window(client, 'runner_results', query_start, query_end)
+            abandoned = load_window(client, 'abandoned_races', query_start, query_end)
         report = evaluate_archives(archives, results, abandoned)
     except Exception as exc:
         st.warning('Prospective track metrics unavailable: ' + str(exc))
         return
     races = report['races']
-    dates = sorted(set(str(x)[:10] for x in races['race_date'].dropna())) if not races.empty else []
-    if bets:
-        dates = sorted(set(dates) | set(str(x.get('race_date'))[:10] for x in bets if x.get('race_date')))
-    if not dates:
-        st.info('No archived races or recorded bets.')
+    if races.empty and not any(
+            (start_date is None or start_date <= str(b.get('race_date') or '')[:10]) and
+            (end_date is None or str(b.get('race_date') or '')[:10] <= end_date)
+            for b in (bets or [])):
+        st.info('No archived races or recorded bets for this selection.')
         return
-    today = utc_now().astimezone(ZoneInfo(DATE_ZONE)).date()
-    choice = st.radio('Meeting dates', ['All dates', 'Today', 'Date range'],
-                      horizontal=True, key='v061w_track_date_mode')
-    start_date, end_date = None, None
-    if choice == 'Today':
-        start_date = end_date = today.isoformat()
-    elif choice == 'Date range':
-        from datetime import date as date_type
-        default_end = min(today, date_type.fromisoformat(dates[-1]))
-        default_start = date_type.fromisoformat(dates[0])
-        selected_range = st.date_input(
-            'Choose start and end dates', value=(default_start, default_end),
-            key='v061w_track_date_range')
-        if not isinstance(selected_range, (tuple, list)) or len(selected_range) != 2:
-            st.info('Select both the start and end date to display results.')
-            return
-        start_date, end_date = (selected_range[0].isoformat(),
-                                selected_range[1].isoformat())
-        if start_date > end_date:
-            st.error('Start date must not be after end date.')
-            return
     def in_window(value):
         day = str(value or '')[:10]
         return bool(day) and (start_date is None or start_date <= day <= end_date)
